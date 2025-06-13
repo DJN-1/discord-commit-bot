@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 import os
 import base64
 import json
+import logging
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -10,20 +11,23 @@ import datetime
 import requests
 import pytz
 
-print("✅ main.py 실행 시작됨")
+# 로깅 설정
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [%(levelname)s] %(message)s')
 
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-if not DISCORD_TOKEN:
-    print("❌ DISCORD_TOKEN 누락됨!")
+logging.info("✅ main.py 실행 시작됨")
 
 # .env 불러오기
 load_dotenv()
+
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+if not DISCORD_TOKEN:
+    logging.warning("❌ DISCORD_TOKEN 누락됨!")
+
 REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID"))
 
 # Firebase 키 base64로부터 로드
 firebase_key_base64 = os.getenv("FIREBASE_KEY_BASE64")
-print("📦 FIREBASE_KEY_BASE64 길이:", len(firebase_key_base64 or ''))
+logging.info(f"📦 FIREBASE_KEY_BASE64 길이: {len(firebase_key_base64 or '')}")
 
 if not firebase_key_base64:
     raise ValueError("❌ 환경변수 FIREBASE_KEY_BASE64가 누락되었습니다!")
@@ -33,24 +37,18 @@ cred = credentials.Certificate(cred_dict)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-# 디스코드 클라이언트 설정
 intents = discord.Intents.default()
 intents.message_content = True
-intents.guilds = True               # 서버 접속 관련 이벤트
-intents.members = True              # 유저 정보 필요할 경우
+intents.guilds = True
+intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# 한국 시간대
 KST = pytz.timezone("Asia/Seoul")
 
-# !등록 명령어 (관리자만 사용 가능)
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def 등록(ctx, discord_mention: str, github_id: str, repo_name: str, goal_per_day: int):
-    if discord_mention.startswith('<@') and discord_mention.endswith('>'):
-        discord_id = discord_mention.replace('<@', '').replace('>', '').replace('!', '')
-    else:
-        discord_id = discord_mention
+    discord_id = discord_mention.replace('<@', '').replace('>', '').replace('!', '') if discord_mention.startswith('<@') else discord_mention
 
     repo_url = f"https://api.github.com/repos/{github_id}/{repo_name}"
     user_url = f"https://api.github.com/users/{github_id}"
@@ -76,7 +74,6 @@ async def 등록(ctx, discord_mention: str, github_id: str, repo_name: str, goal
     })
     await ctx.send(f"✅ <@{discord_id}> 등록 완료 - {github_id}/{repo_name}, {goal_per_day}회/일")
 
-# !인증 명령어
 @bot.command()
 async def 인증(ctx):
     discord_id = str(ctx.author.id)
@@ -119,7 +116,6 @@ async def 인증(ctx):
         f"📅 오늘 커밋: {commits} / 목표: {goal}"
     )
 
-# !유저목록 명령어
 @bot.command()
 async def 유저목록(ctx):
     users = db.collection("users").stream()
@@ -130,7 +126,6 @@ async def 유저목록(ctx):
 
     await ctx.send("📋 등록된 유저 목록:\n" + "\n".join(lines) if lines else "등록된 유저가 없습니다.")
 
-# !삭제 명령어
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def 삭제(ctx, discord_mention: str):
@@ -142,7 +137,6 @@ async def 삭제(ctx, discord_mention: str):
     else:
         await ctx.send("❌ 해당 유저가 존재하지 않습니다.")
 
-# !수정 명령어
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def 수정(ctx, discord_mention: str, github_id: str = None, repo_name: str = None, goal_per_day: int = None):
@@ -164,7 +158,6 @@ async def 수정(ctx, discord_mention: str, github_id: str = None, repo_name: st
     user_ref.update(updates)
     await ctx.send(f"🔧 <@{discord_id}> 유저 정보 수정 완료: {updates}")
 
-# !기각수정 명령어
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def 기각수정(ctx, discord_mention: str, weekly_fail: int = None, total_fail: int = None):
@@ -187,7 +180,6 @@ async def 기각수정(ctx, discord_mention: str, weekly_fail: int = None, total
     else:
         await ctx.send("⚠️ 수정할 내용이 없습니다. 최소 1개 이상 입력해주세요.")
 
-# 매일 자정 체크
 @tasks.loop(minutes=1)
 async def daily_check():
     now = datetime.datetime.now(KST)
@@ -210,7 +202,6 @@ async def daily_check():
         if message_lines:
             await channel.send("📢 오늘의 기각자 목록:\n" + "\n".join(message_lines))
 
-# 매주 목요일 00:00 정산
 @tasks.loop(minutes=1)
 async def weekly_reset():
     now = datetime.datetime.now(KST)
@@ -241,7 +232,6 @@ async def weekly_reset():
 
         await channel.send("\n".join(message_lines))
 
-# !커피왕 명령어
 @bot.command()
 async def 커피왕(ctx):
     users = db.collection("users").stream()
@@ -267,10 +257,9 @@ async def 커피왕(ctx):
 
     await ctx.send(result)
 
-# 봇 시작 이벤트
 @bot.event
 async def on_ready():
-    print(f"✅ 봇 로그인 완료: {bot.user}")
+    logging.info(f"✅ 봇 로그인 완료: {bot.user}")
     daily_check.start()
     weekly_reset.start()
 
