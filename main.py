@@ -1,6 +1,8 @@
 import discord
 from discord.ext import commands, tasks
 import os
+import base64
+import json
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -13,22 +15,9 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID"))
 
-# Firebase 초기화
-
-cred_dict = {
-  "type": "service_account",
-  "project_id": "discord-bot-project-ccbc2",
-  "private_key_id": "0d73d9d060be5eec585bad330b0cecc7759a85ec",
-  "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC8Jpq5QCAN7ylF\\nbsYK0PsFRBzTyg8NjZNMekmTFcwhIqQRXTpxtGMwZ3tx/6WqKjNMHWXyBV3htAjq\\nWvKQsVDtVVM0e3+/AjlhPt3YxG0IgTo45QadLBTRLO+QgZjSHhqjbz5wh/Of15tU\\nvZbgLkFO5CnnerysFH6d8QDuZdG8iCqtxtXtaXeDOAly8Xmb2JFcRj6lWF9xHtB6\\n7KG1zuJIecnYvAMaJd33Ut32etDPtP2Ii0S8Qx/n9LGCh8XV8o0aI/FKNl07i1my\\nPl6uV7Oimaab+nvwBvoJnssIjKFL41CS9iRckG/NctdFqlS6KMEZuTWO7iQHtbnK\\nsb2lVQgpAgMBAAECggEAB7rcS3UXfAsR2oDpEQOx9G7uckMQaEGjRhaWFD1mhAv8\\nypvWbVp4YsI1n6LdpwaR0fQ5Pn668y1m2l3/LjOivAVv5C2Yu3u3aMfg7Glxg1Jv\\n1muOYIGxn0Bl3T19zlAfTwygd5YWS8BbaNlbK/2qgDe+gvyXaMh0xT9kBudW/RRX\\nAdxSiofUcZ3i79Ors0izRwussQ17ra7w5qWRzuzMlOxP47S/0Hakvm5eLSgh7GjG\\nzhmSFoFhqsj+lmdbs/ERadti/MQuxcaRqhG8x+n2JQYT782T33952of4DFwL7FOy\\niNRRVWonsN5Z8VOyNrJRGMZ1u6nzCDsNACkFalMawQKBgQDnDw0TYco+PJOCbuqM\\nnBlu02F5IA1eWHl4gStu3NRFH4XOiPkRe5W9ari6jsfE3AbzIiG/gY+SOF2sOrOQ\\nJruZqYHwjcBAw2Q7NQxMyWsnkpdi316bIus5SORCcBEs9kheW81eCdthJpUayXHW\\n5CCjIhMHOsrQMp3oCmB2Ps8umQKBgQDQddueDI+uRpBRayFCkwiHrOK0brHz6Xmx\\nxPDuuVrhc/r84O8O+oIhfi/gnBsmhb/lJA8VH7/ZiwRHRmhtd52B4BWWCwcmgQ7I\\n23nGDe1x3qRIaC1tXkK/2VLLf/2LBdKUm5OgvquiZvgXUPJRxvV0Jc34gJHu45Wu\\njU46rLBwEQKBgAZC8ifETqbBHX47Yz/MOyQ1tj6CD9quqxwI5BRtB5OX9xhRve4r\\nWzN24OqtU9yR2d5c3m1CJZHg1SkFrjgJ1KulXFAYh005/k1ccqjiDHVWE6QqSXYK\\nzDURNJ5YSx7czblA45/YxIktcnz3WI5qQDgrhDh972EU/hJ7tYF+0j6BAoGBAMW3\\nMzDJezFxbgo7ENXC/TEp8e/umcvdIvZP87CIj0EMrv5QHY1YXjqEI8bmaP31l5cu\\nxzti3KTprIoppnxFGlgHgJHKLeMAP1SUjgAiT5ZT8/9VB9kWsTqjVlr7LzA/uoYG\\ntVOd5M5o2V/L/7k+eqnJ/Xx3/XHV268uCQevqLzxAoGBAIWiebkanZnUQacByKkw\\nbNxMkrX32/n/ehEcIpJQs0/O+up7r+Zj1x+UvcPsoTC3aU3T3mAinJMLuMGdjX03\\nmr7EoUEWESKW6awhL+ewCkRg2MbiQlrHFj+1xpFxO1StFTW5EnIYb4xWdo29tEbs\\nL8EhpoEZDvMqGM3bYOLZeAiw\\n-----END PRIVATE KEY-----\\n",
-  "client_email": "firebase-adminsdk-fbsvc@discord-bot-project-ccbc2.iam.gserviceaccount.com",
-  "client_id": "111216260693522178096",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40discord-bot-project-ccbc2.iam.gserviceaccount.com",
-  "universe_domain": "googleapis.com"
-}
-
+# Firebase 키 base64로부터 로드
+firebase_key_base64 = os.getenv("FIREBASE_KEY_BASE64")
+cred_dict = json.loads(base64.b64decode(firebase_key_base64).decode("utf-8"))
 cred = credentials.Certificate(cred_dict)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
