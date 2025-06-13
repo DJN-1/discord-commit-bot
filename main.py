@@ -10,6 +10,15 @@ import datetime
 import requests
 import pytz
 
+print("✅ main.py 실행 시작됨")
+
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+if not DISCORD_TOKEN:
+    print("❌ DISCORD_TOKEN 누락됨!")
+
+print("📦 FIREBASE_KEY_BASE64 길이:", len(firebase_key_base64 or ''))
+
+
 # .env 불러오기
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
