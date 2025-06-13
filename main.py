@@ -92,12 +92,15 @@ async def 인증(ctx):
     now = datetime.datetime.now(KST)
     today_str = now.strftime("%Y-%m-%d")
 
-    # GitHub API 호출
-    since = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    url = f"https://api.github.com/repos/{github_id}/{repo}/commits?since={since}"
+    # ✅ since → UTC 기준 자정 (정확한 범위 보장)
+    utc_since = datetime.datetime.utcnow().replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ).isoformat() + "Z"
+
+    url = f"https://api.github.com/repos/{github_id}/{repo}/commits?since={utc_since}"
     headers = {
-    "Accept": "application/vnd.github.v3+json",
-    "Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}"
+        "Accept": "application/vnd.github.v3+json",
+        "Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}"
     }
 
     logging.info(f"📡 인증 요청 URL: {url}")
@@ -116,14 +119,17 @@ async def 인증(ctx):
         await ctx.send("❌ GitHub 응답이 올바르지 않습니다.")
         return
 
-    # 작성자 필터링
+    # 👥 작성자 또는 푸시한 사람 기준으로 커밋 필터링
     commits = sum(
         1 for c in all_commits
-        if c.get("author", {}).get("login", "").lower() == github_id.lower()
+        if github_id.lower() in {
+            c.get("author", {}).get("login", "").lower(),
+            c.get("committer", {}).get("login", "").lower()
+        }
     )
     passed = commits >= goal
 
-    # Firestore에 기록 업데이트
+    # Firestore 업데이트
     user_ref.update({
         f"history.{today_str}": {
             "commits": commits,
@@ -139,6 +145,7 @@ async def 인증(ctx):
         f"📦 Repo: {repo}\n"
         f"📅 오늘 커밋: {commits} / 목표: {goal}"
     )
+
 
 @bot.command()
 async def 유저목록(ctx):
