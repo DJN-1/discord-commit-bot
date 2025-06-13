@@ -36,6 +36,8 @@ db = firestore.client()
 # 디스코드 클라이언트 설정
 intents = discord.Intents.default()
 intents.message_content = True
+intents.guilds = True               # 서버 접속 관련 이벤트
+intents.members = True              # 유저 정보 필요할 경우
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # 한국 시간대
