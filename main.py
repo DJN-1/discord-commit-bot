@@ -16,9 +16,6 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 if not DISCORD_TOKEN:
     print("❌ DISCORD_TOKEN 누락됨!")
 
-print("📦 FIREBASE_KEY_BASE64 길이:", len(firebase_key_base64 or ''))
-
-
 # .env 불러오기
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -26,6 +23,11 @@ REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID"))
 
 # Firebase 키 base64로부터 로드
 firebase_key_base64 = os.getenv("FIREBASE_KEY_BASE64")
+print("📦 FIREBASE_KEY_BASE64 길이:", len(firebase_key_base64 or ''))
+
+if not firebase_key_base64:
+    raise ValueError("❌ 환경변수 FIREBASE_KEY_BASE64가 누락되었습니다!")
+
 cred_dict = json.loads(base64.b64decode(firebase_key_base64).decode("utf-8"))
 cred = credentials.Certificate(cred_dict)
 firebase_admin.initialize_app(cred)
