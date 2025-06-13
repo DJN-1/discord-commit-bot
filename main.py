@@ -91,17 +91,31 @@ async def 인증(ctx):
 
     now = datetime.datetime.now(KST)
     today_str = now.strftime("%Y-%m-%d")
+
+    # 로그 추가
+    logging.info(f"🔍 인증 요청: discord_id={discord_id}, github_id={github_id}, repo={repo}")
+    logging.info(f"📅 today_str: {today_str}")
+    logging.info(f"🗂️ Firestore history keys: {list(data.get('history', {}).keys())}")
+
     history = data.get("history", {}).get(today_str)
 
-    if history:
+    if history is not None:
         commits = history.get("commits", 0)
         passed = history.get("passed", False)
     else:
+        # GitHub API 호출
         since = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
         url = f"https://api.github.com/repos/{github_id}/{repo}/commits?author={github_id}&since={since}"
         headers = {"Accept": "application/vnd.github.v3+json"}
         response = requests.get(url, headers=headers)
-        commits = len(response.json()) if isinstance(response.json(), list) else 0
+
+        # 응답 검사
+        if response.status_code != 200:
+            await ctx.send("❌ GitHub API 호출 실패: 사용자 또는 레포 확인")
+            return
+
+        commit_data = response.json()
+        commits = len(commit_data) if isinstance(commit_data, list) else 0
         passed = commits >= goal
 
         user_ref.update({
@@ -115,6 +129,7 @@ async def 인증(ctx):
         f"📦 Repo: {repo}\n"
         f"📅 오늘 커밋: {commits} / 목표: {goal}"
     )
+
 
 @bot.command()
 async def 유저목록(ctx):
