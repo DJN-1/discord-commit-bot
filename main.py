@@ -95,7 +95,10 @@ async def 인증(ctx):
     # GitHub API 호출
     since = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     url = f"https://api.github.com/repos/{github_id}/{repo}/commits?since={since}"
-    headers = {"Accept": "application/vnd.github.v3+json"}
+    headers = {
+    "Accept": "application/vnd.github.v3+json",
+    "Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}"
+    }
 
     logging.info(f"📡 인증 요청 URL: {url}")
     response = requests.get(url, headers=headers)
