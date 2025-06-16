@@ -13,10 +13,9 @@ import pytz
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [%(levelname)s] %(message)s')
-
 logging.info("✅ main.py 실행 시작됨")
 
-# .env 불러오기
+# .env 로드
 load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -25,7 +24,7 @@ if not DISCORD_TOKEN:
 
 REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID"))
 
-# Firebase 키 base64로부터 로드
+# Firebase 키 base64 변환
 firebase_key_base64 = os.getenv("FIREBASE_KEY_BASE64")
 logging.info(f"📦 FIREBASE_KEY_BASE64 길이: {len(firebase_key_base64 or '')}")
 
@@ -92,7 +91,6 @@ async def 인증(ctx):
     now = datetime.datetime.now(KST)
     today_str = now.strftime("%Y-%m-%d")
 
-    # ✅ since → UTC 기준 자정 (정확한 범위 보장)
     utc_since = datetime.datetime.utcnow().replace(
         hour=0, minute=0, second=0, microsecond=0
     ).isoformat() + "Z"
@@ -119,7 +117,6 @@ async def 인증(ctx):
         await ctx.send("❌ GitHub 응답이 올바르지 않습니다.")
         return
 
-    # 👥 작성자 또는 푸시한 사람 기준으로 커밋 필터링
     commits = sum(
         1 for c in all_commits
         if github_id.lower() in {
@@ -129,7 +126,6 @@ async def 인증(ctx):
     )
     passed = commits >= goal
 
-    # Firestore 업데이트
     user_ref.update({
         f"history.{today_str}": {
             "commits": commits,
@@ -137,7 +133,6 @@ async def 인증(ctx):
         }
     })
 
-    # 결과 메시지
     result_msg = "✅ 통과! 🎉" if passed else "❌ 커피 한 잔 할래요옹~ 😢"
     await ctx.send(
         f"{result_msg}\n"
@@ -146,75 +141,10 @@ async def 인증(ctx):
         f"📅 오늘 커밋: {commits} / 목표: {goal}"
     )
 
-
-@bot.command()
-async def 유저목록(ctx):
-    users = db.collection("users").stream()
-    lines = []
-    for user in users:
-        doc = user.to_dict()
-        lines.append(f"🧑 {doc.get('github_id')} / {doc.get('repo_name')} / 목표 {doc.get('goal_per_day')}회")
-
-    await ctx.send("📋 등록된 유저 목록:\n" + "\n".join(lines) if lines else "등록된 유저가 없습니다.")
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def 삭제(ctx, discord_mention: str):
-    discord_id = discord_mention.replace('<@', '').replace('>', '').replace('!', '') if discord_mention.startswith('<@') else discord_mention
-    user_ref = db.collection("users").document(discord_id)
-    if user_ref.get().exists:
-        user_ref.delete()
-        await ctx.send(f"🗑️ <@{discord_id}> 유저 삭제 완료")
-    else:
-        await ctx.send("❌ 해당 유저가 존재하지 않습니다.")
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def 수정(ctx, discord_mention: str, github_id: str = None, repo_name: str = None, goal_per_day: int = None):
-    discord_id = discord_mention.replace('<@', '').replace('>', '').replace('!', '') if discord_mention.startswith('<@') else discord_mention
-    user_ref = db.collection("users").document(discord_id)
-    doc = user_ref.get()
-    if not doc.exists:
-        await ctx.send("❌ 해당 유저가 존재하지 않습니다.")
-        return
-
-    updates = {}
-    if github_id:
-        updates["github_id"] = github_id
-    if repo_name:
-        updates["repo_name"] = repo_name
-    if goal_per_day is not None:
-        updates["goal_per_day"] = goal_per_day
-
-    user_ref.update(updates)
-    await ctx.send(f"🔧 <@{discord_id}> 유저 정보 수정 완료: {updates}")
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def 기각수정(ctx, discord_mention: str, weekly_fail: int = None, total_fail: int = None):
-    discord_id = discord_mention.replace('<@', '').replace('>', '').replace('!', '') if discord_mention.startswith('<@') else discord_mention
-    user_ref = db.collection("users").document(discord_id)
-    doc = user_ref.get()
-    if not doc.exists:
-        await ctx.send("❌ 해당 유저가 존재하지 않습니다.")
-        return
-
-    updates = {}
-    if weekly_fail is not None:
-        updates["weekly_fail"] = weekly_fail
-    if total_fail is not None:
-        updates["total_fail"] = total_fail
-
-    if updates:
-        user_ref.update(updates)
-        await ctx.send(f"🛠️ <@{discord_id}> 기각 수 수정 완료: {updates}")
-    else:
-        await ctx.send("⚠️ 수정할 내용이 없습니다. 최소 1개 이상 입력해주세요.")
-
 @tasks.loop(minutes=1)
 async def daily_check():
     now = datetime.datetime.now(KST)
-    if now.hour == 0 and now.minute == 0:
+    if now.weekday() < 5 and now.hour == 0 and now.minute == 0:
         today_str = now.strftime("%Y-%m-%d")
         users = db.collection("users").stream()
         channel = bot.get_channel(REPORT_CHANNEL_ID)
@@ -222,16 +152,21 @@ async def daily_check():
 
         for user in users:
             doc = user.to_dict()
-            passed = doc.get("history", {}).get(today_str, {}).get("passed", False)
+            history = doc.get("history", {})
+            today_data = history.get(today_str)
+            passed = today_data.get("passed") if today_data else False
+
             if not passed:
                 db.collection("users").document(user.id).update({
                     "weekly_fail": firestore.Increment(1),
                     "total_fail": firestore.Increment(1)
                 })
-                message_lines.append(f"❌ {user.id} 기각")
+                message_lines.append(f"❌ <@{user.id}> 기각")
 
         if message_lines:
             await channel.send("📢 오늘의 기각자 목록:\n" + "\n".join(message_lines))
+        else:
+            await channel.send("🎉 오늘은 모두 통과했습니다. 굿보이 굿걸 👏")
 
 @tasks.loop(minutes=1)
 async def weekly_reset():
@@ -262,31 +197,6 @@ async def weekly_reset():
             message_lines.append("🎉 전원 생존! 모두 커밋을 지켰습니다!")
 
         await channel.send("\n".join(message_lines))
-
-@bot.command()
-async def 커피왕(ctx):
-    users = db.collection("users").stream()
-    ranking = [(user.id, user.to_dict().get("total_fail", 0)) for user in users]
-    if not ranking or all(fail == 0 for _, fail in ranking):
-        await ctx.send("☕ 커피왕 랭킹 ☕\n🥳 모두 0잔! 커밋 열심히 하셨습니다!")
-        return
-
-    ranking.sort(key=lambda x: x[1], reverse=True)
-    result = "☕ 커피왕 랭킹 ☕\n"
-    prev_score = None
-    current_rank = 0
-    shown_count = 0
-
-    for i, (uid, score) in enumerate(ranking):
-        if score == 0:
-            continue
-        if score != prev_score:
-            current_rank = shown_count + 1
-        result += f"{current_rank}위: <@{uid}> - 누적 기각 {score}회\n"
-        prev_score = score
-        shown_count += 1
-
-    await ctx.send(result)
 
 @bot.event
 async def on_ready():
