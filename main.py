@@ -141,6 +141,95 @@ async def 인증(ctx):
         f"📅 오늘 커밋: {commits} / 목표: {goal}"
     )
 
+@bot.command()
+async def 유저목록(ctx):
+    users = db.collection("users").stream()
+    lines = []
+    for user in users:
+        doc = user.to_dict()
+        lines.append(f"🧑 {doc.get('github_id')} / {doc.get('repo_name')} / 목표 {doc.get('goal_per_day')}회")
+
+    await ctx.send("📋 등록된 유저 목록:\n" + "\n".join(lines) if lines else "등록된 유저가 없습니다.")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def 삭제(ctx, discord_mention: str):
+    discord_id = discord_mention.replace('<@', '').replace('>', '').replace('!', '') if discord_mention.startswith('<@') else discord_mention
+    user_ref = db.collection("users").document(discord_id)
+    if user_ref.get().exists:
+        user_ref.delete()
+        await ctx.send(f"🗑️ <@{discord_id}> 유저 삭제 완료")
+    else:
+        await ctx.send("❌ 해당 유저가 존재하지 않습니다.")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def 수정(ctx, discord_mention: str, github_id: str = None, repo_name: str = None, goal_per_day: int = None):
+    discord_id = discord_mention.replace('<@', '').replace('>', '').replace('!', '') if discord_mention.startswith('<@') else discord_mention
+    user_ref = db.collection("users").document(discord_id)
+    doc = user_ref.get()
+    if not doc.exists:
+        await ctx.send("❌ 해당 유저가 존재하지 않습니다.")
+        return
+
+    updates = {}
+    if github_id:
+        updates["github_id"] = github_id
+    if repo_name:
+        updates["repo_name"] = repo_name
+    if goal_per_day is not None:
+        updates["goal_per_day"] = goal_per_day
+
+    user_ref.update(updates)
+    await ctx.send(f"🔧 <@{discord_id}> 유저 정보 수정 완료: {updates}")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def 기각수정(ctx, discord_mention: str, weekly_fail: int = None, total_fail: int = None):
+    discord_id = discord_mention.replace('<@', '').replace('>', '').replace('!', '') if discord_mention.startswith('<@') else discord_mention
+    user_ref = db.collection("users").document(discord_id)
+    doc = user_ref.get()
+    if not doc.exists:
+        await ctx.send("❌ 해당 유저가 존재하지 않습니다.")
+        return
+
+    updates = {}
+    if weekly_fail is not None:
+        updates["weekly_fail"] = weekly_fail
+    if total_fail is not None:
+        updates["total_fail"] = total_fail
+
+    if updates:
+        user_ref.update(updates)
+        await ctx.send(f"🛠️ <@{discord_id}> 기각 수 수정 완료: {updates}")
+    else:
+        await ctx.send("⚠️ 수정할 내용이 없습니다. 최소 1개 이상 입력해주세요.")
+
+@bot.command()
+async def 커피왕(ctx):
+    users = db.collection("users").stream()
+    ranking = [(user.id, user.to_dict().get("total_fail", 0)) for user in users]
+    if not ranking or all(fail == 0 for _, fail in ranking):
+        await ctx.send("☕ 커피왕 랭킹 ☕\n🥳 모두 0잔! 커피왕 아니고 코딩왕이당")
+        return
+
+    ranking.sort(key=lambda x: x[1], reverse=True)
+    result = "☕ 커피왕 랭킹 ☕\n"
+    prev_score = None
+    current_rank = 0
+    shown_count = 0
+
+    for i, (uid, score) in enumerate(ranking):
+        if score == 0:
+            continue
+        if score != prev_score:
+            current_rank = shown_count + 1
+        result += f"{current_rank}위: <@{uid}> - 누적 기각 {score}회\n"
+        prev_score = score
+        shown_count += 1
+
+    await ctx.send(result)
+
 @tasks.loop(minutes=1)
 async def daily_check():
     now = datetime.datetime.now(KST)
@@ -174,7 +263,7 @@ async def weekly_reset():
     if now.weekday() == 3 and now.hour == 0 and now.minute == 0:
         users = db.collection("users").stream()
         channel = bot.get_channel(REPORT_CHANNEL_ID)
-        message_lines = ["☕ 주간 커밋 정산 결과 (평일 기준)"]
+        message_lines = ["☕ 주간 커밋 정산 결과 "]
         survivors, losers = [], []
 
         for user in users:
