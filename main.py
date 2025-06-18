@@ -261,32 +261,39 @@ async def daily_check():
 @tasks.loop(minutes=1)
 async def weekly_reset():
     now = datetime.datetime.now(KST)
-    if now.weekday() == 3 and now.hour == 0 and now.minute == 0:
+    if now.weekday() == 3 and now.hour == 0 and now.minute == 0:  # 목요일 00:00
         users = db.collection("users").stream()
         channel = bot.get_channel(REPORT_CHANNEL_ID)
-        message_lines = ["☕ 주간 커밋 정산 결과 "]
-        survivors, losers = [], []
+        message_lines = ["☕ 주간 커피왕 발표 ☕"]
+
+        max_fail = -1
+        coffee_king_ids = []
 
         for user in users:
             doc = user.to_dict()
             user_id = user.id
             weekly_fail = doc.get("weekly_fail", 0)
 
-            if weekly_fail < 5:
-                losers.append((user_id, weekly_fail))
-            else:
-                survivors.append(user_id)
+            # 가장 많은 weekly_fail 가진 유저 찾기 (1 이상만)
+            if weekly_fail >= 1:
+                if weekly_fail > max_fail:
+                    max_fail = weekly_fail
+                    coffee_king_ids = [user_id]
+                elif weekly_fail == max_fail:
+                    coffee_king_ids.append(user_id)
 
+            # 매주 초기화
             db.collection("users").document(user_id).update({"weekly_fail": 0})
 
-        if losers:
-            message_lines.append("🥶 커피 당첨자 (평일 기각 5회 미만):")
-            for uid, count in losers:
-                message_lines.append(f"- <@{uid}> ({count}회 기각)")
+        if coffee_king_ids:
+            message_lines.append(f"🥶 이번 주 커피 당첨자 (기각 {max_fail}회):")
+            for uid in coffee_king_ids:
+                message_lines.append(f"- <@{uid}>")
         else:
-            message_lines.append("🎉 전원 생존! 모두 커밋을 지켰습니다!")
+            message_lines.append("🎉 모두 주 1회 이상 기각되지 않음! 이번 주는 커피왕 없음 ☕")
 
         await channel.send("\n".join(message_lines))
+
 
 @bot.event
 async def on_ready():
