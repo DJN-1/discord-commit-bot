@@ -233,8 +233,8 @@ async def 커피왕(ctx):
 @tasks.loop(minutes=1)
 async def daily_check():
     now = datetime.datetime.now(KST)
-    if now.weekday() < 5 and now.hour == 0 and now.minute == 0:
-        target_date = (now - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    if now.weekday() < 5 and now.hour == 11 and now.minute == 59:  # 평일 11:59 AM
+        target_date = now.strftime("%Y-%m-%d")
         users = db.collection("users").stream()
         channel = bot.get_channel(REPORT_CHANNEL_ID)
         message_lines = []
@@ -256,7 +256,6 @@ async def daily_check():
             await channel.send(f"📢 [{target_date}] 기각자 목록:\n" + "\n".join(message_lines))
         else:
             await channel.send(f"🎉 [{target_date}] 모두 통과! 굿보이 굿걸 👏")
-
 
 @tasks.loop(minutes=1)
 async def weekly_reset():
