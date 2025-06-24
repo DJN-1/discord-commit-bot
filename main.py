@@ -233,7 +233,7 @@ async def 커피왕(ctx):
 @tasks.loop(minutes=1)
 async def daily_check():
     now = datetime.datetime.now(KST)
-    if now.weekday() < 5 and now.hour == 11 and now.minute == 59:  # 평일 11:59 AM
+    if now.weekday() < 5 and now.hour == 23 and now.minute == 59:  # 평일 23:59 
         target_date = now.strftime("%Y-%m-%d")
         users = db.collection("users").stream()
         channel = bot.get_channel(REPORT_CHANNEL_ID)
