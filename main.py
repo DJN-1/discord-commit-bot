@@ -24,7 +24,6 @@ if not DISCORD_TOKEN:
 
 REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID"))
 
-# Firebase 키 base64 변환
 firebase_key_base64 = os.getenv("FIREBASE_KEY_BASE64")
 logging.info(f"📦 FIREBASE_KEY_BASE64 길이: {len(firebase_key_base64 or '')}")
 
@@ -75,6 +74,11 @@ async def 등록(ctx, discord_mention: str, github_id: str, repo_name: str, goal
 
 @bot.command()
 async def 인증(ctx):
+    now = datetime.datetime.now(KST)
+    if now.weekday() >= 5:
+        await ctx.send("🌴 오늘은 주말입니다. 셀프 칭찬하세욥 ☕")
+        return
+
     discord_id = str(ctx.author.id)
     user_ref = db.collection("users").document(discord_id)
     doc = user_ref.get()
@@ -88,7 +92,6 @@ async def 인증(ctx):
     repo = data["repo_name"]
     goal = data["goal_per_day"]
 
-    now = datetime.datetime.now(KST)
     today_str = now.strftime("%Y-%m-%d")
 
     utc_since = datetime.datetime.utcnow().replace(
@@ -210,7 +213,7 @@ async def 커피왕(ctx):
     users = db.collection("users").stream()
     ranking = [(user.id, user.to_dict().get("total_fail", 0)) for user in users]
     if not ranking or all(fail == 0 for _, fail in ranking):
-        await ctx.send("☕ 커피왕 랭킹 ☕\n🥳 모두 0잔! 커피왕 아니고 코딩왕이당")
+        await ctx.send("☕ 커피왕 랭킹 ☕\n🥳 모두 0잔! 커피왕 아니고 코딩왕!!!")
         return
 
     ranking.sort(key=lambda x: x[1], reverse=True)
@@ -231,9 +234,24 @@ async def 커피왕(ctx):
     await ctx.send(result)
 
 @tasks.loop(minutes=1)
+async def initialize_daily_history():
+    now = datetime.datetime.now(KST)
+    if now.weekday() < 5 and now.hour == 0 and now.minute == 0:
+        today_str = now.strftime("%Y-%m-%d")
+        users = db.collection("users").stream()
+        for user in users:
+            db.collection("users").document(user.id).update({
+                f"history.{today_str}": {
+                    "commits": 0,
+                    "passed": False
+                }
+            })
+        logging.info(f"📅 {today_str} 기록 초기화 완료")
+
+@tasks.loop(minutes=1)
 async def daily_check():
     now = datetime.datetime.now(KST)
-    if now.weekday() < 5 and now.hour == 23 and now.minute == 59:  # 평일 23:59 
+    if now.weekday() < 5 and now.hour == 23 and now.minute == 59:
         target_date = now.strftime("%Y-%m-%d")
         users = db.collection("users").stream()
         channel = bot.get_channel(REPORT_CHANNEL_ID)
@@ -243,9 +261,9 @@ async def daily_check():
             doc = user.to_dict()
             history = doc.get("history", {})
             today_data = history.get(target_date)
-            passed = today_data.get("passed") if today_data else False
+            passed = today_data.get("passed") if today_data else None
 
-            if not passed:
+            if passed is not True:
                 db.collection("users").document(user.id).update({
                     "weekly_fail": firestore.Increment(1),
                     "total_fail": firestore.Increment(1)
@@ -260,7 +278,7 @@ async def daily_check():
 @tasks.loop(minutes=1)
 async def weekly_reset():
     now = datetime.datetime.now(KST)
-    if now.weekday() == 3 and now.hour == 0 and now.minute == 0:  # 목요일 00:00
+    if now.weekday() == 3 and now.hour == 0 and now.minute == 0:
         users = db.collection("users").stream()
         channel = bot.get_channel(REPORT_CHANNEL_ID)
         message_lines = ["☕ 주간 커피왕 발표 ☕"]
@@ -273,7 +291,6 @@ async def weekly_reset():
             user_id = user.id
             weekly_fail = doc.get("weekly_fail", 0)
 
-            # 가장 많은 weekly_fail 가진 유저 찾기 (1 이상만)
             if weekly_fail >= 1:
                 if weekly_fail > max_fail:
                     max_fail = weekly_fail
@@ -281,7 +298,6 @@ async def weekly_reset():
                 elif weekly_fail == max_fail:
                     coffee_king_ids.append(user_id)
 
-            # 매주 초기화
             db.collection("users").document(user_id).update({"weekly_fail": 0})
 
         if coffee_king_ids:
@@ -293,10 +309,10 @@ async def weekly_reset():
 
         await channel.send("\n".join(message_lines))
 
-
 @bot.event
 async def on_ready():
     logging.info(f"✅ 봇 로그인 완료: {bot.user}")
+    initialize_daily_history.start()
     daily_check.start()
     weekly_reset.start()
 
