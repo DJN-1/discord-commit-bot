@@ -7,6 +7,7 @@ import logging
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
+from datetime import datetime, timedelta
 import datetime
 import requests
 import pytz
@@ -74,8 +75,11 @@ async def 등록(ctx, discord_mention: str, github_id: str, repo_name: str, goal
 
 @bot.command()
 async def 인증(ctx):
-    now = datetime.datetime.now(KST)
-    if now.weekday() >= 5:
+    KST = pytz.timezone("Asia/Seoul")
+    now_kst = datetime.datetime.now(KST)
+
+    # 주말 제외
+    if now_kst.weekday() >= 5:
         await ctx.send("🌴 오늘은 주말입니다. 셀프 칭찬하세욥 ☕")
         return
 
@@ -91,14 +95,16 @@ async def 인증(ctx):
     github_id = data["github_id"]
     repo = data["repo_name"]
     goal = data["goal_per_day"]
+    today_str = now_kst.strftime("%Y-%m-%d")
 
-    today_str = now.strftime("%Y-%m-%d")
+    # KST 자정 기준 -> UTC로 변환
+    today_start_kst = now_kst.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end_kst = today_start_kst + datetime.timedelta(days=1)
 
-    utc_since = datetime.datetime.utcnow().replace(
-        hour=0, minute=0, second=0, microsecond=0
-    ).isoformat() + "Z"
+    since_utc = today_start_kst.astimezone(pytz.utc).isoformat()
+    until_utc = today_end_kst.astimezone(pytz.utc).isoformat()
 
-    url = f"https://api.github.com/repos/{github_id}/{repo}/commits?since={utc_since}"
+    url = f"https://api.github.com/repos/{github_id}/{repo}/commits?since={since_utc}&until={until_utc}"
     headers = {
         "Accept": "application/vnd.github.v3+json",
         "Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}"
@@ -120,13 +126,20 @@ async def 인증(ctx):
         await ctx.send("❌ GitHub 응답이 올바르지 않습니다.")
         return
 
-    commits = sum(
-        1 for c in all_commits
-        if github_id.lower() in {
-            c.get("author", {}).get("login", "").lower(),
-            c.get("committer", {}).get("login", "").lower()
-        }
-    )
+    valid_commits = []
+    for c in all_commits:
+        author_login = c.get("author", {}).get("login", "").lower()
+        committer_login = c.get("committer", {}).get("login", "").lower()
+        commit_time = c.get("commit", {}).get("committer", {}).get("date", "")
+        sha = c.get("sha", "")[:7]
+        if github_id.lower() in {author_login, committer_login}:
+            valid_commits.append((sha, commit_time))
+
+    # 관리자 로그용 출력
+    for sha, commit_time in valid_commits:
+        logging.info(f"🕒 커밋 확인: SHA={sha}, 시간={commit_time}")
+
+    commits = len(valid_commits)
     passed = commits >= goal
 
     user_ref.update({
@@ -143,6 +156,7 @@ async def 인증(ctx):
         f"📦 Repo: {repo}\n"
         f"📅 오늘 커밋: {commits} / 목표: {goal}"
     )
+
 
 @bot.command()
 async def 유저목록(ctx):
@@ -204,7 +218,7 @@ async def 기각수정(ctx, discord_mention: str, weekly_fail: int = None, total
 
     if updates:
         user_ref.update(updates)
-        await ctx.send(f"🛠️ <@{discord_id}> 기각 수 수정 완료: {updates}")
+        await ctx.send(f"🛠️ <@{discord_id}> 기각 수수수수퍼노바 : {updates}")
     else:
         await ctx.send("⚠️ 수정할 내용이 없습니다. 최소 1개 이상 입력해주세요.")
 
