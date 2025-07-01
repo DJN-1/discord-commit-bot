@@ -113,7 +113,10 @@ async def 인증(ctx):
     logging.info(f"📡 인증 요청 URL: {url}")
     response = requests.get(url, headers=headers)
     logging.info(f"📡 응답 코드: {response.status_code}")
-    logging.info(f"📡 응답 일부: {response.text[:300]}")
+    logging.info(f"📡 Rate Limit: {response.headers.get('X-RateLimit-Remaining')}/{response.headers.get('X-RateLimit-Limit')}, Reset={response.headers.get('X-RateLimit-Reset')}")
+
+    # 응답 본문 일부 출력 (최대 500자)
+    logging.info(f"📡 인증 응답 전문 일부:\n{response.text[:500]}")
 
     if response.status_code != 200:
         await ctx.send("❌ GitHub API 호출 실패: 사용자 또는 레포 확인")
