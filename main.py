@@ -97,7 +97,7 @@ async def 인증(ctx):
     goal = data["goal_per_day"]
     today_str = now_kst.strftime("%Y-%m-%d")
 
-    # KST 자정 기준 -> UTC로 변환
+    # KST 자정 기준 -> UTC 변환
     today_start_kst = now_kst.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end_kst = today_start_kst + datetime.timedelta(days=1)
 
@@ -113,10 +113,8 @@ async def 인증(ctx):
     logging.info(f"📡 인증 요청 URL: {url}")
     response = requests.get(url, headers=headers)
     logging.info(f"📡 응답 코드: {response.status_code}")
+    logging.info(f"📡 응답 일부: {response.text[:300]}")
     logging.info(f"📡 Rate Limit: {response.headers.get('X-RateLimit-Remaining')}/{response.headers.get('X-RateLimit-Limit')}, Reset={response.headers.get('X-RateLimit-Reset')}")
-
-    # 응답 본문 일부 출력 (최대 500자)
-    logging.info(f"📡 인증 응답 전문 일부:\n{response.text[:500]}")
 
     if response.status_code != 200:
         await ctx.send("❌ GitHub API 호출 실패: 사용자 또는 레포 확인")
@@ -131,16 +129,27 @@ async def 인증(ctx):
 
     valid_commits = []
     for c in all_commits:
+        commit_time_str = c.get("commit", {}).get("committer", {}).get("date", "")
+        if not commit_time_str:
+            continue
+
+        try:
+            commit_time_utc = datetime.datetime.fromisoformat(commit_time_str.replace("Z", "+00:00"))
+            commit_time_kst = commit_time_utc.astimezone(KST)
+        except Exception as e:
+            logging.warning(f"⛔ 시간 파싱 실패: {commit_time_str} - {e}")
+            continue
+
+        if commit_time_kst.date() != now_kst.date():
+            continue  # 오늘 KST 날짜 아님
+
         author_login = c.get("author", {}).get("login", "").lower()
         committer_login = c.get("committer", {}).get("login", "").lower()
-        commit_time = c.get("commit", {}).get("committer", {}).get("date", "")
         sha = c.get("sha", "")[:7]
-        if github_id.lower() in {author_login, committer_login}:
-            valid_commits.append((sha, commit_time))
 
-    # 관리자 로그용 출력
-    for sha, commit_time in valid_commits:
-        logging.info(f"🕒 커밋 확인: SHA={sha}, 시간={commit_time}")
+        if github_id.lower() in {author_login, committer_login}:
+            valid_commits.append((sha, commit_time_str))
+            logging.info(f"🕒 커밋 확인: SHA={sha}, UTC={commit_time_str}, KST={commit_time_kst.strftime('%Y-%m-%d %H:%M:%S')}")
 
     commits = len(valid_commits)
     passed = commits >= goal
@@ -159,6 +168,7 @@ async def 인증(ctx):
         f"📦 Repo: {repo}\n"
         f"📅 오늘 커밋: {commits} / 목표: {goal}"
     )
+
 
 
 @bot.command()
