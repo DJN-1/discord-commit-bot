@@ -49,8 +49,8 @@ def get_user_data(discord_id):
     doc = db.collection("users").document(discord_id).get()
     return doc.to_dict() if doc.exists else None
 
+
 async def get_valid_commits(user, now_kst):
-    # 조회 범위 넉넉하게
     start_kst = now_kst.replace(hour=0, minute=0, second=0, microsecond=0)
     end_kst = start_kst + timedelta(days=1)
     since = (start_kst - timedelta(days=1)).astimezone(pytz.utc).isoformat()
@@ -63,13 +63,41 @@ async def get_valid_commits(user, now_kst):
     }
 
     res = requests.get(url, headers=headers)
-    logging.info(f"📡 {user['github_id']} 인증 요청: {res.status_code}")
-    all_commits = res.json() if res.status_code == 200 else []
+    logging.info(f"📡 GitHub 인증 요청 → 사용자: {user['github_id']}, 상태: {res.status_code}")
 
-    return sum(
-        1 for c in all_commits
-        if is_valid_commit(c, user["github_id"], now_kst.date())
-    )
+    if res.status_code != 200:
+        logging.warning(f"❌ GitHub API 호출 실패\n응답: {res.text}")
+        return 0
+
+    all_commits = res.json()
+    valid_count = 0
+
+    for c in all_commits:
+        time_str = c.get("commit", {}).get("committer", {}).get("date")
+        sha = c.get("sha", "")[:7]
+
+        if not time_str:
+            logging.warning(f"⛔ 타임스탬프 누락된 커밋: SHA={sha}")
+            continue
+
+        try:
+            time_kst = parser.isoparse(time_str).astimezone(KST)
+        except Exception as e:
+            logging.warning(f"⛔ 시간 파싱 실패: {time_str} - {e}")
+            continue
+
+        if time_kst.date() != now_kst.date():
+            logging.info(f"📅 제외된 커밋: SHA={sha}, 날짜={time_kst.strftime('%Y-%m-%d')} (오늘 아님)")
+            continue
+
+        author_login = c.get("author", {}).get("login", "").lower()
+        committer_login = c.get("committer", {}).get("login", "").lower()
+        if user["github_id"].lower() in {author_login, committer_login}:
+            valid_count += 1
+            logging.info(f"✅ 유효 커밋 {valid_count}: SHA={sha}, KST={time_kst.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    return valid_count
+
 
 def is_valid_commit(commit, github_id, target_date):
     time_str = commit.get("commit", {}).get("committer", {}).get("date")
@@ -86,6 +114,7 @@ def is_valid_commit(commit, github_id, target_date):
     committer_login = commit.get("committer", {}).get("login", "").lower()
     return github_id.lower() in {author_login, committer_login}
 
+
 async def update_daily_history(discord_id, date_obj, count, passed):
     date_str = date_obj.strftime("%Y-%m-%d")
     db.collection("users").document(str(discord_id)).update({
@@ -94,6 +123,7 @@ async def update_daily_history(discord_id, date_obj, count, passed):
             "passed": passed
         }
     })
+
 
 def format_result_msg(user, commits, passed):
     result_msg = "✅ 통과! 🎉" if passed else "❌ 커피 한 잔 할래요옹~ 😢"
