@@ -45,6 +45,65 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 KST = pytz.timezone("Asia/Seoul")
 
+def get_user_data(discord_id):
+    doc = db.collection("users").document(discord_id).get()
+    return doc.to_dict() if doc.exists else None
+
+async def get_valid_commits(user, now_kst):
+    # 조회 범위 넉넉하게
+    start_kst = now_kst.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_kst = start_kst + timedelta(days=1)
+    since = (start_kst - timedelta(days=1)).astimezone(pytz.utc).isoformat()
+    until = (end_kst + timedelta(days=1)).astimezone(pytz.utc).isoformat()
+
+    url = f"https://api.github.com/repos/{user['github_id']}/{user['repo_name']}/commits?since={since}&until={until}"
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}"
+    }
+
+    res = requests.get(url, headers=headers)
+    logging.info(f"📡 {user['github_id']} 인증 요청: {res.status_code}")
+    all_commits = res.json() if res.status_code == 200 else []
+
+    return sum(
+        1 for c in all_commits
+        if is_valid_commit(c, user["github_id"], now_kst.date())
+    )
+
+def is_valid_commit(commit, github_id, target_date):
+    time_str = commit.get("commit", {}).get("committer", {}).get("date")
+    if not time_str:
+        return False
+    try:
+        time_kst = parser.isoparse(time_str).astimezone(KST)
+    except:
+        return False
+    if time_kst.date() != target_date:
+        return False
+
+    author_login = commit.get("author", {}).get("login", "").lower()
+    committer_login = commit.get("committer", {}).get("login", "").lower()
+    return github_id.lower() in {author_login, committer_login}
+
+async def update_daily_history(discord_id, date_obj, count, passed):
+    date_str = date_obj.strftime("%Y-%m-%d")
+    db.collection("users").document(str(discord_id)).update({
+        f"history.{date_str}": {
+            "commits": count,
+            "passed": passed
+        }
+    })
+
+def format_result_msg(user, commits, passed):
+    result_msg = "✅ 통과! 🎉" if passed else "❌ 커피 한 잔 할래요옹~ 😢"
+    return (
+        f"{result_msg}\n"
+        f"👤 GitHub: {user['github_id']}\n"
+        f"📦 Repo: {user['repo_name']}\n"
+        f"📅 오늘 커밋: {commits} / 목표: {user['goal_per_day']}"
+    )
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def 등록(ctx, discord_mention: str, github_id: str, repo_name: str, goal_per_day: int):
@@ -76,101 +135,26 @@ async def 등록(ctx, discord_mention: str, github_id: str, repo_name: str, goal
 
 @bot.command()
 async def 인증(ctx):
-    KST = pytz.timezone("Asia/Seoul")
-    now_kst = datetime.datetime.now(KST)
-
-    if now_kst.weekday() >= 5:
-        await ctx.send("🌴 오늘은 주말입니다. 셀프 칭찬하세욥 ☕")
-        return
-
-    discord_id = str(ctx.author.id)
-    user_ref = db.collection("users").document(discord_id)
-    doc = user_ref.get()
-
-    if not doc.exists:
-        await ctx.send("❌ 먼저 !등록 명령어로 등록해주세요.")
-        return
-
-    data = doc.to_dict()
-    github_id = data["github_id"]
-    repo = data["repo_name"]
-    goal = data["goal_per_day"]
-    today_str = now_kst.strftime("%Y-%m-%d")
-
-    today_start_kst = now_kst.replace(hour=0, minute=0, second=0, microsecond=0)
-    today_end_kst = today_start_kst + datetime.timedelta(days=1)
-
-    since_utc = today_start_kst.astimezone(pytz.utc).isoformat()
-    until_utc = today_end_kst.astimezone(pytz.utc).isoformat()
-
-    url = f"https://api.github.com/repos/{github_id}/{repo}/commits?since={since_utc}&until={until_utc}"
-    headers = {
-        "Accept": "application/vnd.github.v3+json",
-        "Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}"
-    }
-
-    logging.info(f"📡 인증 요청 URL: {url}")
-    response = requests.get(url, headers=headers)
-    logging.info(f"📡 응답 코드: {response.status_code}")
-    logging.info(f"📡 응답 일부: {response.text[:300]}")
-    logging.info(f"📡 Rate Limit: {response.headers.get('X-RateLimit-Remaining')}/{response.headers.get('X-RateLimit-Limit')}, Reset={response.headers.get('X-RateLimit-Reset')}")
-
-    if response.status_code != 200:
-        await ctx.send("❌ GitHub API 호출 실패: 사용자 또는 레포 확인")
-        return
-
     try:
-        all_commits = response.json()
+        user_data = get_user_data(str(ctx.author.id))
+        if not user_data:
+            await ctx.send("❌ 먼저 !등록 명령어로 등록해주세요.")
+            return
+
+        now_kst = datetime.datetime.now(KST)
+        if now_kst.weekday() >= 5:
+            await ctx.send("🌴 오늘은 주말입니다. 셀프 칭찬하세욥 ☕")
+            return
+
+        commits = await get_valid_commits(user_data, now_kst)
+        passed = commits >= user_data["goal_per_day"]
+
+        await update_daily_history(ctx.author.id, now_kst.date(), commits, passed)
+        await ctx.send(format_result_msg(user_data, commits, passed))
+
     except Exception as e:
-        logging.warning(f"❌ JSON 파싱 실패: {e}")
-        await ctx.send("❌ GitHub 응답이 올바르지 않습니다.")
-        return
-
-    valid_commits = []
-    for c in all_commits:
-        commit_time_str = (
-            c.get("commit", {}).get("committer", {}).get("date") or
-            c.get("commit", {}).get("author", {}).get("date")
-        )
-        if not commit_time_str:
-            logging.warning(f"❌ 커밋에 시간 정보 없음: {json.dumps(c)[:200]}")
-            continue
-
-        try:
-            commit_time_utc = parser.isoparse(commit_time_str)
-            commit_time_kst = commit_time_utc.astimezone(KST)
-        except Exception as e:
-            logging.warning(f"⛔ 커밋 시간 파싱 실패: '{commit_time_str}' - {e}")
-            continue
-
-        #if commit_time_kst.date() != now_kst.date():
-        #    continue  # 오늘 날짜가 아님 (KST 기준)
-
-        author_login = c.get("author", {}).get("login", "").lower()
-        committer_login = c.get("committer", {}).get("login", "").lower()
-        sha = c.get("sha", "")[:7]
-
-        if github_id.lower() in {author_login, committer_login}:
-            valid_commits.append((sha, commit_time_str))
-            logging.info(f"🕒 커밋 확인: SHA={sha}, UTC={commit_time_str}, KST={commit_time_kst.strftime('%Y-%m-%d %H:%M:%S')}")
-
-    commits = len(valid_commits)
-    passed = commits >= goal
-
-    user_ref.update({
-        f"history.{today_str}": {
-            "commits": commits,
-            "passed": passed
-        }
-    })
-
-    result_msg = "✅ 통과! 🎉" if passed else "❌ 커피 한 잔 할래요옹~ 😢"
-    await ctx.send(
-        f"{result_msg}\n"
-        f"👤 GitHub: {github_id}\n"
-        f"📦 Repo: {repo}\n"
-        f"📅 오늘 커밋: {commits} / 목표: {goal}"
-    )
+        logging.exception("⛔ 인증 처리 중 예외 발생")
+        await ctx.send("❌ 인증 처리 중 문제가 발생했어요. 관리자에게 문의해주세요.")
 
 @bot.command()
 async def 유저목록(ctx):
