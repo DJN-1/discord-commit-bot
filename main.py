@@ -136,21 +136,32 @@ async def 등록(ctx, discord_mention: str, github_id: str, repo_name: str, goal
 @bot.command()
 async def 인증(ctx):
     try:
-        user_data = get_user_data(str(ctx.author.id))
+        discord_id = str(ctx.author.id)
+        logging.info(f"[인증 시작] 디스코드 ID: {discord_id} / 닉네임: {ctx.author.display_name}")
+
+        user_data = get_user_data(discord_id)
         if not user_data:
+            logging.warning("[인증 중단] 사용자 데이터 없음")
             await ctx.send("❌ 먼저 !등록 명령어로 등록해주세요.")
             return
 
         now_kst = datetime.datetime.now(KST)
+        logging.info(f"[인증 시간] 현재 시간 (KST): {now_kst.strftime('%Y-%m-%d %H:%M:%S')}")
+
         if now_kst.weekday() >= 5:
+            logging.info("[인증 종료] 주말 - 인증 면제")
             await ctx.send("🌴 오늘은 주말입니다. 셀프 칭찬하세욥 ☕")
             return
 
         commits = await get_valid_commits(user_data, now_kst)
         passed = commits >= user_data["goal_per_day"]
 
-        await update_daily_history(ctx.author.id, now_kst.date(), commits, passed)
+        logging.info(f"[인증 결과] 유효 커밋 수: {commits} / 목표: {user_data['goal_per_day']} / 통과: {passed}")
+        await update_daily_history(discord_id, now_kst.date(), commits, passed)
+        
+        logging.info(f"[ctx.send 호출 전] 사용자: {discord_id}")
         await ctx.send(format_result_msg(user_data, commits, passed))
+        logging.info(f"[ctx.send 완료] 메시지 전송됨")
 
     except Exception as e:
         logging.exception("⛔ 인증 처리 중 예외 발생")
