@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 import datetime
 import requests
 import pytz
+from dateutil import parser
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [%(levelname)s] %(message)s')
@@ -78,7 +79,6 @@ async def 인증(ctx):
     KST = pytz.timezone("Asia/Seoul")
     now_kst = datetime.datetime.now(KST)
 
-    # 주말 제외
     if now_kst.weekday() >= 5:
         await ctx.send("🌴 오늘은 주말입니다. 셀프 칭찬하세욥 ☕")
         return
@@ -97,7 +97,6 @@ async def 인증(ctx):
     goal = data["goal_per_day"]
     today_str = now_kst.strftime("%Y-%m-%d")
 
-    # KST 자정 기준 -> UTC 변환
     today_start_kst = now_kst.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end_kst = today_start_kst + datetime.timedelta(days=1)
 
@@ -129,19 +128,23 @@ async def 인증(ctx):
 
     valid_commits = []
     for c in all_commits:
-        commit_time_str = c.get("commit", {}).get("committer", {}).get("date", "")
+        commit_time_str = (
+            c.get("commit", {}).get("committer", {}).get("date") or
+            c.get("commit", {}).get("author", {}).get("date")
+        )
         if not commit_time_str:
+            logging.warning(f"❌ 커밋에 시간 정보 없음: {json.dumps(c)[:200]}")
             continue
 
         try:
-            commit_time_utc = datetime.datetime.fromisoformat(commit_time_str.replace("Z", "+00:00"))
+            commit_time_utc = parser.isoparse(commit_time_str)
             commit_time_kst = commit_time_utc.astimezone(KST)
         except Exception as e:
-            logging.warning(f"⛔ 시간 파싱 실패: {commit_time_str} - {e}")
+            logging.warning(f"⛔ 커밋 시간 파싱 실패: '{commit_time_str}' - {e}")
             continue
 
         if commit_time_kst.date() != now_kst.date():
-            continue  # 오늘 KST 날짜 아님
+            continue  # 오늘 날짜가 아님 (KST 기준)
 
         author_login = c.get("author", {}).get("login", "").lower()
         committer_login = c.get("committer", {}).get("login", "").lower()
@@ -168,8 +171,6 @@ async def 인증(ctx):
         f"📦 Repo: {repo}\n"
         f"📅 오늘 커밋: {commits} / 목표: {goal}"
     )
-
-
 
 @bot.command()
 async def 유저목록(ctx):
