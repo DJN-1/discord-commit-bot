@@ -383,4 +383,5 @@ async def on_ready():
     logging.info("[on_ready] 초기화 루프 시작: weekly_reset")
     weekly_reset.start()
 
-bot.run(DISCORD_TOKEN)
+if __name__ == "__main__":
+    bot.run(DISCORD_TOKEN)
