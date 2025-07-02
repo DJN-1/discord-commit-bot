@@ -143,8 +143,8 @@ async def 인증(ctx):
             logging.warning(f"⛔ 커밋 시간 파싱 실패: '{commit_time_str}' - {e}")
             continue
 
-        if commit_time_kst.date() != now_kst.date():
-            continue  # 오늘 날짜가 아님 (KST 기준)
+        #if commit_time_kst.date() != now_kst.date():
+        #    continue  # 오늘 날짜가 아님 (KST 기준)
 
         author_login = c.get("author", {}).get("login", "").lower()
         committer_login = c.get("committer", {}).get("login", "").lower()
