@@ -163,15 +163,23 @@ async def 등록(ctx, discord_mention: str, github_id: str, repo_name: str, goal
     })
     await ctx.send(f"✅ <@{discord_id}> 등록 완료 - {github_id}/{repo_name}, {goal_per_day}회/일")
 
+is_first_cert_call = True  # 모듈 상단 또는 함수 바깥에서 선언
+
 @bot.command()
 async def 인증(ctx):
+    global is_first_cert_call
+    logging.info(f"📥 [!인증 진입] 호출자: {ctx.author.display_name} / 핸들러 ID: {id(인증)}")
+
+    if is_first_cert_call:
+        logging.warning("⚠️ [디버그] 첫 인증 호출로 감지됨! 중복 발생 여부 체크 중")
+        is_first_cert_call = False
+
     try:
         discord_id = str(ctx.author.id)
         logging.info(f"[인증 시작] 디스코드 ID: {discord_id} / 닉네임: {ctx.author.display_name}")
 
         user_data = get_user_data(discord_id)
         if not user_data:
-            logging.warning("[인증 중단] 사용자 데이터 없음")
             await ctx.send("❌ 먼저 !등록 명령어로 등록해주세요.")
             return
 
@@ -188,7 +196,7 @@ async def 인증(ctx):
 
         logging.info(f"[인증 결과] 유효 커밋 수: {commits} / 목표: {user_data['goal_per_day']} / 통과: {passed}")
         await update_daily_history(discord_id, now_kst.date(), commits, passed)
-        
+
         logging.info(f"[ctx.send 호출 전] 사용자: {discord_id}")
         await ctx.send(format_result_msg(user_data, commits, passed))
         logging.info(f"[ctx.send 완료] 메시지 전송됨")
@@ -364,9 +372,15 @@ async def weekly_reset():
 
 @bot.event
 async def on_ready():
-    logging.info(f"✅ 봇 로그인 완료: {bot.user}")
+    logging.info(f"✅ [on_ready] 봇 로그인 완료: {bot.user}")
+    
+    logging.info("[on_ready] 초기화 루프 시작: initialize_daily_history")
     initialize_daily_history.start()
+
+    logging.info("[on_ready] 초기화 루프 시작: daily_check")
     daily_check.start()
+
+    logging.info("[on_ready] 초기화 루프 시작: weekly_reset")
     weekly_reset.start()
 
 bot.run(DISCORD_TOKEN)
