@@ -250,25 +250,30 @@ async def 수정(ctx, discord_mention: str, github_id: str = None, repo_name: st
 
 @bot.command()
 @commands.has_permissions(administrator=True)
-async def 기각수정(ctx, discord_mention: str, weekly_fail: int = None, total_fail: int = None):
-    discord_id = discord_mention.replace('<@', '').replace('>', '').replace('!', '') if discord_mention.startswith('<@') else discord_mention
+async def 기각수정(ctx, discord_mention: str, 차감할횟수: int):
+    discord_id = discord_mention.replace('<@', '').replace('>', '').replace('!', '')
     user_ref = db.collection("users").document(discord_id)
     doc = user_ref.get()
+
     if not doc.exists:
         await ctx.send("❌ 해당 유저가 존재하지 않습니다.")
         return
 
-    updates = {}
-    if weekly_fail is not None:
-        updates["weekly_fail"] = weekly_fail
-    if total_fail is not None:
-        updates["total_fail"] = total_fail
+    # 현재 total_fail, weekly_fail 값 가져오기
+    current_total_fail = doc.to_dict().get("total_fail", 0)
+    current_weekly_fail = doc.to_dict().get("weekly_fail", 0)
 
-    if updates:
-        user_ref.update(updates)
-        await ctx.send(f"🛠️ <@{discord_id}> 기각 수수수수퍼노바")
-    else:
-        await ctx.send("⚠️ 수정할 내용이 없습니다. 최소 1개 이상 입력해주세요.")
+    # 차감된 값 계산
+    new_total_fail = max(0, current_total_fail - 차감할횟수)  # 차감할 횟수만큼 total_fail에서 빼기, 0 이상으로 유지
+    new_weekly_fail = max(0, current_weekly_fail - 차감할횟수)  # 차감할 횟수만큼 weekly_fail에서 빼기, 0 이상으로 유지
+
+    # 값 업데이트
+    user_ref.update({
+        "total_fail": new_total_fail,
+        "weekly_fail": new_weekly_fail
+    })
+
+    await ctx.send(f"✅ <@{discord_id}> 의 기각 수수수수수퍼노바\n")
 
 @bot.command()
 async def 커피왕(ctx):
