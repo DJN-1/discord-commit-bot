@@ -159,8 +159,7 @@ async def 등록(ctx, discord_mention: str, github_id: str, repo_name: str, goal
         "goal_per_day": goal_per_day,
         "history": {},
         "weekly_fail": 0,
-        "total_fail": 0,
-        "on_vacation": False
+        "total_fail": 0
     })
     await ctx.send(f"✅ <@{discord_id}> 등록 완료 - {github_id}/{repo_name}, {goal_per_day}회/일")
 
@@ -266,7 +265,7 @@ async def 기각수정(ctx, discord_mention: str, weekly_fail: int = None, total
 
     if updates:
         user_ref.update(updates)
-        await ctx.send(f"🛠️ <@{discord_id}> 기각 수수수수퍼노바")
+        await ctx.send(f"🛠️ <@{discord_id}> 기각 수수수수퍼노바 : {updates}")
     else:
         await ctx.send("⚠️ 수정할 내용이 없습니다. 최소 1개 이상 입력해주세요.")
 
@@ -295,21 +294,6 @@ async def 커피왕(ctx):
 
     await ctx.send(result)
 
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def 휴가(ctx, discord_mention: str):
-    discord_id = discord_mention.replace('<@', '').replace('>', '').replace('!', '')
-    db.collection("users").document(discord_id).update({"on_vacation": True})
-    await ctx.send(f"🏝️ <@{discord_id}> 님은 휴가 상태로 전환되었습니다.")
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def 복귀(ctx, discord_mention: str):
-    discord_id = discord_mention.replace('<@', '').replace('>', '').replace('!', '')
-    db.collection("users").document(discord_id).update({"on_vacation": False})
-    await ctx.send(f"👋 <@{discord_id}> 님이 복귀했습니다!")
-
-
 @tasks.loop(minutes=1)
 async def initialize_daily_history():
     now = datetime.datetime.now(KST)
@@ -336,11 +320,6 @@ async def daily_check():
 
         for user in users:
             doc = user.to_dict()
-            
-            # 휴가자는 기각 체크 제외
-            if doc.get("on_vacation", False):
-                continue
-
             history = doc.get("history", {})
             today_data = history.get(target_date)
             passed = today_data.get("passed") if today_data else None
