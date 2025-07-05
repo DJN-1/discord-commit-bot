@@ -126,10 +126,10 @@ async def certify_commit(ctx):
 
         now_kst = datetime.now(KST)
         if now_kst.weekday() >= 5:
-            await ctx.send("🌴 오늘은 주말! 즐거운 휴식을 취하세요 ☕")
+            await ctx.send("🌴 주말인디 살살하세요 행님 ☕")
             return
         if user_data.get("on_vacation", False):
-            await ctx.send("🏝️ 현재 휴가 상태입니다. 인증에서 제외됩니다.")
+            await ctx.send("🏝️ 휴가 가서도 코테? 에밥니다 헴")
             return
 
         commits = await get_valid_commits(bot.http_session, user_data, now_kst)
@@ -219,7 +219,7 @@ async def coffee_king(ctx):
         ranking = [(s.id, s.to_dict().get("total_fail", 0)) for s in users_stream if s.to_dict().get("total_fail", 0) > 0]
         
         if not ranking:
-            await ctx.send("☕ **커피왕 랭킹** ☕\n\n🥳 모두 0잔! 커피왕 아니고 코딩왕이셈요 행님덜!")
+            await ctx.send("☕ **커피왕 랭킹** ☕\n\n🥳 모두 0잔!? 커피왕이 아니라 코딩왕이셈요 행님덜!")
             return
 
         ranking.sort(key=lambda x: x[1], reverse=True)
@@ -275,7 +275,7 @@ async def daily_check():
         mentions = " ".join([f"<@{uid}>" for uid in failed_users])
         await channel.send(f"📢 **[{now.strftime('%Y-%m-%d')}] 기각자 목록:**\n{mentions}")
     else:
-        await channel.send(f"🎉 **[{now.strftime('%Y-%m-%d')}] 전원 통과!** 훌륭합니다! 👏")
+        await channel.send(f"🎉 **[{now.strftime('%Y-%m-%d')}] 전원 통과!** 굿보이 굿걸! 👏")
 
 @tasks.loop(hours=1)
 async def weekly_reset():
@@ -296,7 +296,7 @@ async def weekly_reset():
     if max_fail > 0:
         kings = [uid for uid, fails in weekly_fails.items() if fails == max_fail]
         mentions = " ".join([f"<@{uid}>" for uid in kings])
-        await channel.send(f"🥶 **이번 주 커피 당첨자 (기각 {max_fail}회):**\n{mentions}")
+        await channel.send(f"🥶 **이번 주 커피 당첨자 (기각 {max_fail}회):**\n{mentions} !! 음 달다 달아~")
     else:
         await channel.send("🎉 **이번 주는 커피왕 없음!** 모두 수고하셨습니다!")
 
