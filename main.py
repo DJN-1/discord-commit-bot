@@ -8,7 +8,7 @@ import time
 import asyncio
 import aiohttp # requests 대신 사용할 비동기 HTTP 라이브러리
 import pytz
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -242,15 +242,17 @@ async def unset_vacation(ctx, member: discord.Member):
 
 # --- 4. 백그라운드 작업 (Tasks) ---
 
-@tasks.loop(hours=1)
+@tasks.loop(time=time(hour=23, minute=59, tzinfo=KST))
 async def daily_check():
     await bot.wait_until_ready()
     now = datetime.now(KST)
     
-    # 매일 밤 11시 59분에만 작동
-    if now.weekday() >= 5 or now.hour != 23 or now.minute != 59:
+    # 주말(토, 일)에는 실행하지 않음
+    if now.weekday() >= 5:
+        logging.info(f"--- 😴 주말({now.strftime('%Y-%m-%d')}), 일일 체크 건너뜀 ---")
         return
 
+    # 'time' 인자로 정확한 시간에 실행되므로, 더 이상 시간/분 체크 if문은 필요 없습니다.
     logging.info(f"--- 🌙 {now.strftime('%Y-%m-%d')} 일일 기각자 체크 시작 ---")
     users_stream = await db_stream(db.collection("users"))
     channel = bot.get_channel(REPORT_CHANNEL_ID)
@@ -277,28 +279,30 @@ async def daily_check():
     else:
         await channel.send(f"🎉 **[{now.strftime('%Y-%m-%d')}] 전원 통과!** 굿보이 굿걸! 👏")
 
-@tasks.loop(hours=1)
+@tasks.loop(time=time(hour=0, minute=0, tzinfo=KST))
 async def weekly_reset():
     await bot.wait_until_ready()
     now = datetime.now(KST)
     
-    # 매주 목요일 자정에만 작동 (수요일 -> 목요일 넘어가는 자정)
-    if now.weekday() != 3 or now.hour != 0 or now.minute != 0:
+    # 목요일이 아니면 실행하지 않음
+    if now.weekday() != 3: 
         return
         
     logging.info("--- ☕ 주간 커피왕 발표 및 초기화 시작 ---")
     users_stream = await db_stream(db.collection("users"))
     channel = bot.get_channel(REPORT_CHANNEL_ID)
     
+    # 어제(수요일)까지의 데이터를 기준으로 집계
+    yesterday = now - timedelta(days=1)
     weekly_fails = {s.id: s.to_dict().get("weekly_fail", 0) for s in users_stream}
     max_fail = max(weekly_fails.values()) if weekly_fails else 0
     
     if max_fail > 0:
         kings = [uid for uid, fails in weekly_fails.items() if fails == max_fail]
         mentions = " ".join([f"<@{uid}>" for uid in kings])
-        await channel.send(f"🥶 **이번 주 커피 당첨자 (기각 {max_fail}회):**\n{mentions} !! 음 달다 달아~")
+        await channel.send(f"🥶 **이번 주({yesterday.strftime('%m/%d')} 마감) 커피 당첨자 (기각 {max_fail}회):**\n{mentions} !! 음 달다 달아~")
     else:
-        await channel.send("🎉 **이번 주는 커피왕 없음!** 모두 수고하셨습니다!")
+        await channel.send(f"🎉 **이번 주({yesterday.strftime('%m/%d')} 마감)는 커피왕 없음!** 모두 수고하셨습니다!")
 
     # 주간 실패 횟수 초기화
     for user_id in weekly_fails.keys():
