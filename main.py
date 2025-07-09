@@ -242,13 +242,13 @@ async def unset_vacation(ctx, member: discord.Member):
 
 # --- 4. 백그라운드 작업 (Tasks) ---
 
-@tasks.loop(time=time(hour=23, minute=59, tzinfo=KST))
+@tasks.loop(minutes=1)
 async def daily_check():
     await bot.wait_until_ready()
     now = datetime.now(KST)
     
     # 주말(토, 일)에는 실행하지 않음
-    if now.weekday() >= 5:
+    if now.weekday() < 5 and now.hour == 23 and now.minute == 59:
         logging.info(f"--- 😴 주말({now.strftime('%Y-%m-%d')}), 일일 체크 건너뜀 ---")
         return
 
@@ -279,35 +279,33 @@ async def daily_check():
     else:
         await channel.send(f"🎉 **[{now.strftime('%Y-%m-%d')}] 전원 통과!** 굿보이 굿걸! 👏")
 
-@tasks.loop(time=time(hour=0, minute=0, tzinfo=KST))
+@tasks.loop(minutes=1)
 async def weekly_reset():
     await bot.wait_until_ready()
     now = datetime.now(KST)
     
-    # 목요일이 아니면 실행하지 않음
-    if now.weekday() != 3: 
-        return
+    # 목요일 자정(00:00)에만 실행
+    if now.weekday() == 3 and now.hour == 0 and now.minute == 0:
+        logging.info("--- ☕ 주간 커피왕 발표 및 초기화 시작 ---")
+        users_stream = await db_stream(db.collection("users"))
+        channel = bot.get_channel(REPORT_CHANNEL_ID)
         
-    logging.info("--- ☕ 주간 커피왕 발표 및 초기화 시작 ---")
-    users_stream = await db_stream(db.collection("users"))
-    channel = bot.get_channel(REPORT_CHANNEL_ID)
-    
-    # 어제(수요일)까지의 데이터를 기준으로 집계
-    yesterday = now - timedelta(days=1)
-    weekly_fails = {s.id: s.to_dict().get("weekly_fail", 0) for s in users_stream}
-    max_fail = max(weekly_fails.values()) if weekly_fails else 0
-    
-    if max_fail > 0:
-        kings = [uid for uid, fails in weekly_fails.items() if fails == max_fail]
-        mentions = " ".join([f"<@{uid}>" for uid in kings])
-        await channel.send(f"🥶 **이번 주({yesterday.strftime('%m/%d')} 마감) 커피 당첨자 (기각 {max_fail}회):**\n{mentions} !! 음 달다 달아~")
-    else:
-        await channel.send(f"🎉 **이번 주({yesterday.strftime('%m/%d')} 마감)는 커피왕 없음!** 모두 수고하셨습니다!")
+        # 어제(수요일)까지의 데이터를 기준으로 집계
+        yesterday = now - timedelta(days=1)
+        weekly_fails = {s.id: s.to_dict().get("weekly_fail", 0) for s in users_stream}
+        max_fail = max(weekly_fails.values()) if weekly_fails else 0
+        
+        if max_fail > 0:
+            kings = [uid for uid, fails in weekly_fails.items() if fails == max_fail]
+            mentions = " ".join([f"<@{uid}>" for uid in kings])
+            await channel.send(f"🥶 **이번 주({yesterday.strftime('%m/%d')} 마감) 커피 당첨자 (기각 {max_fail}회):**\n{mentions} !! 음 달다 달아~")
+        else:
+            await channel.send(f"🎉 **이번 주({yesterday.strftime('%m/%d')} 마감)는 커피왕 없음!** 모두 수고하셨습니다!")
 
-    # 주간 실패 횟수 초기화
-    for user_id in weekly_fails.keys():
-        await db_update(db.collection("users").document(user_id), {"weekly_fail": 0})
-    logging.info("--- 📅 주간 실패 횟수 초기화 완료 ---")
+        # 주간 실패 횟수 초기화
+        for user_id in weekly_fails.keys():
+            await db_update(db.collection("users").document(user_id), {"weekly_fail": 0})
+        logging.info("--- 📅 주간 실패 횟수 초기화 완료 ---")
 
 
 # --- 5. 이벤트 핸들러 및 봇 실행 ---
