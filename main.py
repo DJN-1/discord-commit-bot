@@ -247,44 +247,47 @@ async def daily_check():
     await bot.wait_until_ready()
     now = datetime.now(KST)
     
-    # 주말(토, 일)에는 실행하지 않음
-    if now.weekday() < 5 and now.hour == 23 and now.minute == 59:
-        logging.info(f"--- 😴 주말({now.strftime('%Y-%m-%d')}), 일일 체크 건너뜀 ---")
+    # 주말(토요일=5, 일요일=6)에는 실행하지 않음
+    if now.weekday() >= 5:
         return
+    
+    # 평일 오후 11시 59분에만 실행
+    if now.hour == 23 and now.minute == 59:
+        logging.info(f"--- 🌙 {now.strftime('%Y-%m-%d')} 일일 기각자 체크 시작 ---")
+        users_stream = await db_stream(db.collection("users"))
+        channel = bot.get_channel(REPORT_CHANNEL_ID)
+        failed_users = []
 
-    # 'time' 인자로 정확한 시간에 실행되므로, 더 이상 시간/분 체크 if문은 필요 없습니다.
-    logging.info(f"--- 🌙 {now.strftime('%Y-%m-%d')} 일일 기각자 체크 시작 ---")
-    users_stream = await db_stream(db.collection("users"))
-    channel = bot.get_channel(REPORT_CHANNEL_ID)
-    failed_users = []
+        for user_snapshot in users_stream:
+            user_id = user_snapshot.id
+            doc = user_snapshot.to_dict()
+            if doc.get("on_vacation", False): 
+                continue
 
-    for user_snapshot in users_stream:
-        user_id = user_snapshot.id
-        doc = user_snapshot.to_dict()
-        if doc.get("on_vacation", False): continue
+            history = doc.get("history", {})
+            today_data = history.get(now.strftime("%Y-%m-%d"))
+            
+            if not today_data or not today_data.get("passed", False):
+                failed_users.append(user_id)
+                await db_update(db.collection("users").document(user_id), {
+                    "weekly_fail": firestore.Increment(1),
+                    "total_fail": firestore.Increment(1)
+                })
 
-        history = doc.get("history", {})
-        today_data = history.get(now.strftime("%Y-%m-%d"))
+        if failed_users:
+            mentions = " ".join([f"<@{uid}>" for uid in failed_users])
+            await channel.send(f"📢 **[{now.strftime('%Y-%m-%d')}] 기각자 목록:**\n{mentions}")
+        else:
+            await channel.send(f"🎉 **[{now.strftime('%Y-%m-%d')}] 전원 통과!** 굿보이 굿걸! 👏")
         
-        if not today_data or not today_data.get("passed", False):
-            failed_users.append(user_id)
-            await db_update(db.collection("users").document(user_id), {
-                "weekly_fail": firestore.Increment(1),
-                "total_fail": firestore.Increment(1)
-            })
-
-    if failed_users:
-        mentions = " ".join([f"<@{uid}>" for uid in failed_users])
-        await channel.send(f"📢 **[{now.strftime('%Y-%m-%d')}] 기각자 목록:**\n{mentions}")
-    else:
-        await channel.send(f"🎉 **[{now.strftime('%Y-%m-%d')}] 전원 통과!** 굿보이 굿걸! 👏")
+        logging.info(f"--- ✅ 일일 체크 완료: 기각자 {len(failed_users)}명 ---")
 
 @tasks.loop(minutes=1)
 async def weekly_reset():
     await bot.wait_until_ready()
     now = datetime.now(KST)
     
-    # 목요일 자정(00:00)에만 실행
+    # 목요일(weekday=3) 자정(00:00)에만 실행
     if now.weekday() == 3 and now.hour == 0 and now.minute == 0:
         logging.info("--- ☕ 주간 커피왕 발표 및 초기화 시작 ---")
         users_stream = await db_stream(db.collection("users"))
@@ -305,6 +308,7 @@ async def weekly_reset():
         # 주간 실패 횟수 초기화
         for user_id in weekly_fails.keys():
             await db_update(db.collection("users").document(user_id), {"weekly_fail": 0})
+        
         logging.info("--- 📅 주간 실패 횟수 초기화 완료 ---")
 
 
