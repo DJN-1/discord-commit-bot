@@ -240,6 +240,80 @@ async def unset_vacation(ctx, member: discord.Member):
     await db_update(db.collection("users").document(str(member.id)), {"on_vacation": False})
     await ctx.send(f"👋 {member.mention} 님이 복귀했습니다!")
 
+# 날짜를 '월', '화', '수'... 로 바꿔주는 도우미 함수
+def get_day_of_week_korean(date_obj):
+    days = ["월", "화", "수", "목", "금", "토", "일"]
+    return days[date_obj.weekday()]
+
+@bot.command(name="체크")
+async def check_status(ctx):
+    """이번 주 자신의 기각 현황을 확인합니다."""
+    async with ctx.typing():
+        # --- ✨ 추가된 예외 처리 ---
+        today = datetime.now(KST)
+        if today.weekday() == 3:  # 오늘이 목요일(weekday=3)인 경우
+            embed = discord.Embed(
+                title="🐣 주간 집계 시작!",
+                description=f"오늘은 이번 주 집계가 시작되는 첫날이에요.\n내일부터 현황 조회가 가능합니다!",
+                color=discord.Color.from_rgb(173, 216, 230) # Light Blue
+            )
+            await ctx.send(embed=embed)
+            return
+        # --- 여기까지 ---
+
+        user_ref = db.collection("users").document(str(ctx.author.id))
+        user_doc = await db_get(user_ref)
+
+        if not user_doc.exists:
+            await ctx.send("❌ 먼저 `!등록` 명령어로 등록해주세요.")
+            return
+
+        user_data = user_doc.to_dict()
+        weekly_fail_count = user_data.get("weekly_fail", 0)
+
+        embed = discord.Embed(title="☕️ 이번 주 나의 기각 현황", color=discord.Color.dark_gold())
+        embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.avatar.url if ctx.author.avatar else ctx.author.default_avatar.url)
+
+        if weekly_fail_count == 0:
+            embed.description = f"<@{ctx.author.id}> - 누적 **0**회\n\n🥳 우리 행님 코딩 좀 치는디 스벅 고? 행복회로 돌려잇~"
+            embed.color = discord.Color.green()
+        else:
+            history = user_data.get("history", {})
+            failed_dates = []
+
+            # 1. 이번 주의 시작(목요일) 날짜 계산
+            today = datetime.now(KST)
+            # 오늘 요일에서 목요일(3)까지 며칠이 지났는지 계산
+            days_since_thursday = (today.weekday() - 3 + 7) % 7
+            start_of_week = today.date() - timedelta(days=days_since_thursday)
+
+            # 2. 이번 주 목요일부터 오늘까지의 기록을 확인
+            for i in range(7):
+                check_date = start_of_week + timedelta(days=i)
+                # 미래의 날짜는 확인할 필요 없음
+                if check_date > today.date():
+                    break
+                
+                date_str = check_date.strftime("%Y-%m-%d")
+                day_record = history.get(date_str)
+
+                # history에 기록이 있고, passed가 False인 경우
+                if day_record and day_record.get("passed") is False:
+                    day_of_week_korean = get_day_of_week_korean(check_date)
+                    failed_dates.append(f"**{check_date.strftime('%m/%d')}({day_of_week_korean})**")
+
+            fail_dates_str = ", ".join(failed_dates) if failed_dates else "기록 없음"
+            
+            embed.description = (
+                f"<@{ctx.author.id}> - 누적 **{weekly_fail_count}**회\n\n"
+                f"**누락 날짜:** {fail_dates_str}\n\n"
+                "😢 행님 누구 하나 키보드 훔치는 건 어때유~"
+            )
+            embed.color = discord.Color.red()
+
+        await ctx.send(embed=embed)
+
+
 # --- 4. 백그라운드 작업 (Tasks) ---
 
 @tasks.loop(minutes=1)
@@ -257,28 +331,44 @@ async def daily_check():
         users_stream = await db_stream(db.collection("users"))
         channel = bot.get_channel(REPORT_CHANNEL_ID)
         failed_users = []
+        date_str = now.strftime("%Y-%m-%d")
 
         for user_snapshot in users_stream:
             user_id = user_snapshot.id
+            user_ref = db.collection("users").document(user_id)
             doc = user_snapshot.to_dict()
+            
             if doc.get("on_vacation", False): 
                 continue
 
             history = doc.get("history", {})
-            today_data = history.get(now.strftime("%Y-%m-%d"))
+            today_data = history.get(date_str)
             
-            if not today_data or not today_data.get("passed", False):
-                failed_users.append(user_id)
-                await db_update(db.collection("users").document(user_id), {
+            # 1. !인증 기록이 있고, 통과(passed: True)한 경우 -> 통과 처리 (아무것도 안 함)
+            if today_data and today_data.get("passed", False):
+                continue
+            
+            # 2. !인증 기록이 없거나, 인증했지만 실패(passed: False)한 경우 -> 기각자 목록에 추가
+            failed_users.append(user_id)
+
+            # 3. !인증 기록이 아예 없는 경우에만 DB 기록 및 실패 카운트 증가
+            if not today_data:
+                logging.info(f"-> {doc.get('github_id')}님은 인증 기록이 없어 기각 처리됩니다.")
+                # DB에 0커밋, 실패 기록을 저장
+                await db_update(user_ref, {
+                    f"history.{date_str}": {"commits": 0, "passed": False}
+                })
+                # 실패 횟수 증가
+                await db_update(user_ref, {
                     "weekly_fail": firestore.Increment(1),
                     "total_fail": firestore.Increment(1)
                 })
 
         if failed_users:
             mentions = " ".join([f"<@{uid}>" for uid in failed_users])
-            await channel.send(f"📢 **[{now.strftime('%Y-%m-%d')}] 기각자 목록:**\n{mentions}")
+            await channel.send(f"📢 **[{date_str}] 기각자 목록:**\n{mentions}")
         else:
-            await channel.send(f"🎉 **[{now.strftime('%Y-%m-%d')}] 전원 통과!** 굿보이 굿걸! 👏")
+            await channel.send(f"🎉 **[{date_str}] 전원 통과!** 굿보이 굿걸! 👏")
         
         logging.info(f"--- ✅ 일일 체크 완료: 기각자 {len(failed_users)}명 ---")
 

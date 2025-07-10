@@ -8,7 +8,7 @@ import time
 import asyncio
 import aiohttp # requests 대신 사용할 비동기 HTTP 라이브러리
 import pytz
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -126,10 +126,10 @@ async def certify_commit(ctx):
 
         now_kst = datetime.now(KST)
         if now_kst.weekday() >= 5:
-            await ctx.send("🌴 오늘은 주말! 즐거운 휴식을 취하세요 ☕")
+            await ctx.send("🌴 주말인디 살살하세요 행님 ☕")
             return
         if user_data.get("on_vacation", False):
-            await ctx.send("🏝️ 현재 휴가 상태입니다. 인증에서 제외됩니다.")
+            await ctx.send("🏝️ 휴가 가서도 코테? 에밥니다 헴")
             return
 
         commits = await get_valid_commits(bot.http_session, user_data, now_kst)
@@ -219,7 +219,7 @@ async def coffee_king(ctx):
         ranking = [(s.id, s.to_dict().get("total_fail", 0)) for s in users_stream if s.to_dict().get("total_fail", 0) > 0]
         
         if not ranking:
-            await ctx.send("☕ **커피왕 랭킹** ☕\n\n🥳 모두 0잔! 커피왕 아니고 코딩왕이셈요 행님덜!")
+            await ctx.send("☕ **커피왕 랭킹** ☕\n\n🥳 모두 0잔!? 커피왕이 아니라 코딩왕이셈요 행님덜!")
             return
 
         ranking.sort(key=lambda x: x[1], reverse=True)
@@ -242,68 +242,74 @@ async def unset_vacation(ctx, member: discord.Member):
 
 # --- 4. 백그라운드 작업 (Tasks) ---
 
-@tasks.loop(hours=1)
+@tasks.loop(minutes=1)
 async def daily_check():
     await bot.wait_until_ready()
     now = datetime.now(KST)
     
-    # 매일 밤 11시 59분에만 작동
-    if now.weekday() >= 5 or now.hour != 23 or now.minute != 59:
+    # 주말(토요일=5, 일요일=6)에는 실행하지 않음
+    if now.weekday() >= 5:
         return
+    
+    # 평일 오후 11시 59분에만 실행
+    if now.hour == 23 and now.minute == 59:
+        logging.info(f"--- 🌙 {now.strftime('%Y-%m-%d')} 일일 기각자 체크 시작 ---")
+        users_stream = await db_stream(db.collection("users"))
+        channel = bot.get_channel(REPORT_CHANNEL_ID)
+        failed_users = []
 
-    logging.info(f"--- 🌙 {now.strftime('%Y-%m-%d')} 일일 기각자 체크 시작 ---")
-    users_stream = await db_stream(db.collection("users"))
-    channel = bot.get_channel(REPORT_CHANNEL_ID)
-    failed_users = []
+        for user_snapshot in users_stream:
+            user_id = user_snapshot.id
+            doc = user_snapshot.to_dict()
+            if doc.get("on_vacation", False): 
+                continue
 
-    for user_snapshot in users_stream:
-        user_id = user_snapshot.id
-        doc = user_snapshot.to_dict()
-        if doc.get("on_vacation", False): continue
+            history = doc.get("history", {})
+            today_data = history.get(now.strftime("%Y-%m-%d"))
+            
+            if not today_data or not today_data.get("passed", False):
+                failed_users.append(user_id)
+                await db_update(db.collection("users").document(user_id), {
+                    "weekly_fail": firestore.Increment(1),
+                    "total_fail": firestore.Increment(1)
+                })
 
-        history = doc.get("history", {})
-        today_data = history.get(now.strftime("%Y-%m-%d"))
+        if failed_users:
+            mentions = " ".join([f"<@{uid}>" for uid in failed_users])
+            await channel.send(f"📢 **[{now.strftime('%Y-%m-%d')}] 기각자 목록:**\n{mentions}")
+        else:
+            await channel.send(f"🎉 **[{now.strftime('%Y-%m-%d')}] 전원 통과!** 굿보이 굿걸! 👏")
         
-        if not today_data or not today_data.get("passed", False):
-            failed_users.append(user_id)
-            await db_update(db.collection("users").document(user_id), {
-                "weekly_fail": firestore.Increment(1),
-                "total_fail": firestore.Increment(1)
-            })
+        logging.info(f"--- ✅ 일일 체크 완료: 기각자 {len(failed_users)}명 ---")
 
-    if failed_users:
-        mentions = " ".join([f"<@{uid}>" for uid in failed_users])
-        await channel.send(f"📢 **[{now.strftime('%Y-%m-%d')}] 기각자 목록:**\n{mentions}")
-    else:
-        await channel.send(f"🎉 **[{now.strftime('%Y-%m-%d')}] 전원 통과!** 훌륭합니다! 👏")
-
-@tasks.loop(hours=1)
+@tasks.loop(minutes=1)
 async def weekly_reset():
     await bot.wait_until_ready()
     now = datetime.now(KST)
     
-    # 매주 목요일 자정에만 작동 (수요일 -> 목요일 넘어가는 자정)
-    if now.weekday() != 3 or now.hour != 0 or now.minute != 0:
-        return
+    # 목요일(weekday=3) 자정(00:00)에만 실행
+    if now.weekday() == 3 and now.hour == 0 and now.minute == 0:
+        logging.info("--- ☕ 주간 커피왕 발표 및 초기화 시작 ---")
+        users_stream = await db_stream(db.collection("users"))
+        channel = bot.get_channel(REPORT_CHANNEL_ID)
         
-    logging.info("--- ☕ 주간 커피왕 발표 및 초기화 시작 ---")
-    users_stream = await db_stream(db.collection("users"))
-    channel = bot.get_channel(REPORT_CHANNEL_ID)
-    
-    weekly_fails = {s.id: s.to_dict().get("weekly_fail", 0) for s in users_stream}
-    max_fail = max(weekly_fails.values()) if weekly_fails else 0
-    
-    if max_fail > 0:
-        kings = [uid for uid, fails in weekly_fails.items() if fails == max_fail]
-        mentions = " ".join([f"<@{uid}>" for uid in kings])
-        await channel.send(f"🥶 **이번 주 커피 당첨자 (기각 {max_fail}회):**\n{mentions}")
-    else:
-        await channel.send("🎉 **이번 주는 커피왕 없음!** 모두 수고하셨습니다!")
+        # 어제(수요일)까지의 데이터를 기준으로 집계
+        yesterday = now - timedelta(days=1)
+        weekly_fails = {s.id: s.to_dict().get("weekly_fail", 0) for s in users_stream}
+        max_fail = max(weekly_fails.values()) if weekly_fails else 0
+        
+        if max_fail > 0:
+            kings = [uid for uid, fails in weekly_fails.items() if fails == max_fail]
+            mentions = " ".join([f"<@{uid}>" for uid in kings])
+            await channel.send(f"🥶 **이번 주({yesterday.strftime('%m/%d')} 마감) 커피 당첨자 (기각 {max_fail}회):**\n{mentions} !! 음 달다 달아~")
+        else:
+            await channel.send(f"🎉 **이번 주({yesterday.strftime('%m/%d')} 마감)는 커피왕 없음!** 모두 수고하셨습니다!")
 
-    # 주간 실패 횟수 초기화
-    for user_id in weekly_fails.keys():
-        await db_update(db.collection("users").document(user_id), {"weekly_fail": 0})
-    logging.info("--- 📅 주간 실패 횟수 초기화 완료 ---")
+        # 주간 실패 횟수 초기화
+        for user_id in weekly_fails.keys():
+            await db_update(db.collection("users").document(user_id), {"weekly_fail": 0})
+        
+        logging.info("--- 📅 주간 실패 횟수 초기화 완료 ---")
 
 
 # --- 5. 이벤트 핸들러 및 봇 실행 ---
