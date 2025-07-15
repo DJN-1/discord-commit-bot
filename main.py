@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands, tasks
+from keep_alive import keep_alive
 import os
 import base64
 import json
@@ -564,12 +565,10 @@ async def cleanup():
         logging.error(f"정리 작업 중 오류 발생: {e}")
 
 async def main():
+    # keep_alive 웹 서버를 즉시 실행하여 Render의 헬스 체크를 통과시킵니다.
+    keep_alive()
+
     try:
-        # Rate limit 회피를 위한 랜덤 대기
-        wait_time = random.uniform(10, 30)
-        logging.info(f"🕐 봇 시작 전 {wait_time:.1f}초 대기 중...")
-        await asyncio.sleep(wait_time)
-        
         # --- 세션을 여기서 생성합니다 ---
         timeout = aiohttp.ClientTimeout(total=30, connect=10)
         connector = aiohttp.TCPConnector(limit=50, limit_per_host=5)
@@ -587,17 +586,18 @@ async def main():
                     break # 성공하면 루프 탈출
                 except discord.HTTPException as e:
                     if e.status == 429: # Rate limit
-                        retry_wait = (2 ** attempt) * 60
+                        # Rate limit이 감지되면 여기서만 대기합니다.
+                        retry_wait = (2 ** attempt) * 60 
                         logging.warning(f"⏰ Rate limit 감지. {retry_wait}초 후 재시도...")
                         await asyncio.sleep(retry_wait)
                     else:
-                        raise
+                        raise # 다른 HTTP 에러는 상위로 전달
                 except Exception as e:
                     logging.error(f"❌ 봇 실행 중 오류 발생: {e}")
                     if attempt < max_retries - 1:
-                        await asyncio.sleep(30)
+                        await asyncio.sleep(30) # 기타 에러 발생 시 잠시 후 재시도
                     else:
-                        raise
+                        raise # 최종 실패 시 상위로 전달
 
     except Exception as e:
         logging.error(f"❌ 메인 프로세스 오류: {e}")
