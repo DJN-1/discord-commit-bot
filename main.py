@@ -565,39 +565,42 @@ async def cleanup():
         logging.error(f"정리 작업 중 오류 발생: {e}")
 
 async def main():
-    # keep_alive 웹 서버를 즉시 실행하여 Render의 헬스 체크를 통과시킵니다.
+    # keep_alive 웹 서버는 처음에 한 번만 실행합니다.
     keep_alive()
 
     try:
-        # --- 세션을 여기서 생성합니다 ---
-        timeout = aiohttp.ClientTimeout(total=30, connect=10)
-        connector = aiohttp.TCPConnector(limit=50, limit_per_host=5)
-        async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
-            # 봇 객체에 세션을 직접 할당
-            bot.http_session = session
+        # 재시도 로직을 가장 바깥에 둡니다.
+        max_retries = 3
+        for attempt in range(max_retries):
+            # --- 매 시도마다 새로운 세션을 생성합니다 ---
+            timeout = aiohttp.ClientTimeout(total=30, connect=10)
+            connector = aiohttp.TCPConnector(limit=50, limit_per_host=5)
+            async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+                # 봇 객체에 새로운 세션을 할당
+                bot.http_session = session
 
-            # 재시도 로직 추가
-            max_retries = 3
-            for attempt in range(max_retries):
                 try:
                     async with bot: # 이 블록 안에서 bot.start가 호출됩니다.
                         logging.info(f"🚀 봇 시작 시도 {attempt + 1}/{max_retries}")
                         await bot.start(DISCORD_TOKEN)
-                    break # 성공하면 루프 탈출
+                    
+                    # 성공하면 루프를 완전히 탈출합니다.
+                    break 
+
                 except discord.HTTPException as e:
                     if e.status == 429: # Rate limit
-                        # Rate limit이 감지되면 여기서만 대기합니다.
                         retry_wait = (2 ** attempt) * 60 
                         logging.warning(f"⏰ Rate limit 감지. {retry_wait}초 후 재시도...")
                         await asyncio.sleep(retry_wait)
                     else:
-                        raise # 다른 HTTP 에러는 상위로 전달
+                        raise 
                 except Exception as e:
                     logging.error(f"❌ 봇 실행 중 오류 발생: {e}")
                     if attempt < max_retries - 1:
-                        await asyncio.sleep(30) # 기타 에러 발생 시 잠시 후 재시도
+                        await asyncio.sleep(30)
                     else:
-                        raise # 최종 실패 시 상위로 전달
+                        raise
+            # 안쪽의 async with 구문이 끝나면 해당 시도의 세션은 자동으로 닫힙니다.
 
     except Exception as e:
         logging.error(f"❌ 메인 프로세스 오류: {e}")
