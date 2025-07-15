@@ -274,8 +274,9 @@ async def edit_fails(ctx, member: discord.Member, amount: int):
     async with ctx.typing():
         try:
             user_ref = db.collection("users").document(str(member.id))
-            user_doc = await db_get(user_ref)
-            if not user_doc.exists:
+            
+            # 유저 존재 여부만 먼저 확인
+            if not (await db_get(user_ref)).exists:
                 await ctx.send("❌ 해당 유저는 등록되어 있지 않습니다.")
                 return
             
@@ -284,8 +285,14 @@ async def edit_fails(ctx, member: discord.Member, amount: int):
                 "total_fail": firestore.Increment(amount),
                 "weekly_fail": firestore.Increment(amount)
             })
-            new_total = user_doc.to_dict().get("total_fail", 0) + amount
-            await ctx.send(f"🔧 {member.mention}님의 기각 횟수를 {amount}만큼 조정했습니다. (예상 총 기각: {new_total}회)")
+
+            # 업데이트된 최신 정보를 바로 가져옵니다.
+            updated_doc = await db_get(user_ref)
+            new_total = updated_doc.to_dict().get("total_fail", 0)
+
+            # 정확한 최신 값으로 메시지를 보냅니다.
+            await ctx.send(f"🔧 {member.mention}님의 기각 횟수를 {amount}만큼 조정했습니다. (현재 총 기각: {new_total}회)")
+            
         except Exception as e:
             logging.error(f"기각수정 중 오류 발생: {e}")
             await ctx.send("❌ 기각 수정 중 오류가 발생했습니다.")
@@ -515,23 +522,10 @@ async def weekly_reset():
 @bot.event
 async def on_ready():
     try:
-        # 세션 생성 전 잠시 대기
-        await asyncio.sleep(5)
-        
-        timeout = aiohttp.ClientTimeout(total=30, connect=10)
-        connector = aiohttp.TCPConnector(limit=50, limit_per_host=5)
-        bot.http_session = aiohttp.ClientSession(
-            timeout=timeout,
-            connector=connector
-        )
-        
         logging.info(f"✅ 봇 로그인 완료: {bot.user}")
-        
-        # 태스크 시작 전 추가 대기
-        await asyncio.sleep(10)
+        # 태스크 시작
         daily_check.start()
         weekly_reset.start()
-        
     except Exception as e:
         logging.error(f"❌ 봇 시작 중 오류 발생: {e}")
 
@@ -560,7 +554,7 @@ async def cleanup():
     """봇 종료 시 정리 작업"""
     try:
         if hasattr(bot, 'http_session') and bot.http_session:
-            await bot.http_session.close()
+            #await bot.http_session.close()
             logging.info("📡 aiohttp 클라이언트 세션 종료됨")
         
         # 진행 중인 작업들 정리
@@ -576,32 +570,37 @@ async def main():
         logging.info(f"🕐 봇 시작 전 {wait_time:.1f}초 대기 중...")
         await asyncio.sleep(wait_time)
         
-        # 재시도 로직 추가
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                async with bot:
-                    logging.info(f"🚀 봇 시작 시도 {attempt + 1}/{max_retries}")
-                    await bot.start(DISCORD_TOKEN)
-                break
-            except discord.HTTPException as e:
-                if e.status == 429:  # Rate limit
-                    retry_wait = (2 ** attempt) * 60  # 1분, 2분, 4분 대기
-                    logging.warning(f"⏰ Rate limit 감지. {retry_wait}초 후 재시도...")
-                    await asyncio.sleep(retry_wait)
-                else:
-                    raise
-            except Exception as e:
-                logging.error(f"❌ 봇 실행 중 오류 발생: {e}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(30)
-                else:
-                    raise
-                    
+        # --- 세션을 여기서 생성합니다 ---
+        timeout = aiohttp.ClientTimeout(total=30, connect=10)
+        connector = aiohttp.TCPConnector(limit=50, limit_per_host=5)
+        async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+            # 봇 객체에 세션을 직접 할당
+            bot.http_session = session
+
+            # 재시도 로직 추가
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    async with bot: # 이 블록 안에서 bot.start가 호출됩니다.
+                        logging.info(f"🚀 봇 시작 시도 {attempt + 1}/{max_retries}")
+                        await bot.start(DISCORD_TOKEN)
+                    break # 성공하면 루프 탈출
+                except discord.HTTPException as e:
+                    if e.status == 429: # Rate limit
+                        retry_wait = (2 ** attempt) * 60
+                        logging.warning(f"⏰ Rate limit 감지. {retry_wait}초 후 재시도...")
+                        await asyncio.sleep(retry_wait)
+                    else:
+                        raise
+                except Exception as e:
+                    logging.error(f"❌ 봇 실행 중 오류 발생: {e}")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(30)
+                    else:
+                        raise
+
     except Exception as e:
         logging.error(f"❌ 메인 프로세스 오류: {e}")
-    finally:
-        await cleanup()
 
 if __name__ == "__main__":
     try:
