@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 import os
 import base64
 import json
+import random
 import logging
 import time
 import asyncio
@@ -514,12 +515,25 @@ async def weekly_reset():
 @bot.event
 async def on_ready():
     try:
-        bot.http_session = aiohttp.ClientSession()
+        # 세션 생성 전 잠시 대기
+        await asyncio.sleep(5)
+        
+        timeout = aiohttp.ClientTimeout(total=30, connect=10)
+        connector = aiohttp.TCPConnector(limit=50, limit_per_host=5)
+        bot.http_session = aiohttp.ClientSession(
+            timeout=timeout,
+            connector=connector
+        )
+        
         logging.info(f"✅ 봇 로그인 완료: {bot.user}")
+        
+        # 태스크 시작 전 추가 대기
+        await asyncio.sleep(10)
         daily_check.start()
         weekly_reset.start()
+        
     except Exception as e:
-        logging.error(f"봇 시작 중 오류 발생: {e}")
+        logging.error(f"❌ 봇 시작 중 오류 발생: {e}")
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -557,10 +571,35 @@ async def cleanup():
 
 async def main():
     try:
-        async with bot:
-            await bot.start(DISCORD_TOKEN)
+        # Rate limit 회피를 위한 랜덤 대기
+        wait_time = random.uniform(10, 30)
+        logging.info(f"🕐 봇 시작 전 {wait_time:.1f}초 대기 중...")
+        await asyncio.sleep(wait_time)
+        
+        # 재시도 로직 추가
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                async with bot:
+                    logging.info(f"🚀 봇 시작 시도 {attempt + 1}/{max_retries}")
+                    await bot.start(DISCORD_TOKEN)
+                break
+            except discord.HTTPException as e:
+                if e.status == 429:  # Rate limit
+                    retry_wait = (2 ** attempt) * 60  # 1분, 2분, 4분 대기
+                    logging.warning(f"⏰ Rate limit 감지. {retry_wait}초 후 재시도...")
+                    await asyncio.sleep(retry_wait)
+                else:
+                    raise
+            except Exception as e:
+                logging.error(f"❌ 봇 실행 중 오류 발생: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(30)
+                else:
+                    raise
+                    
     except Exception as e:
-        logging.error(f"봇 실행 중 오류 발생: {e}")
+        logging.error(f"❌ 메인 프로세스 오류: {e}")
     finally:
         await cleanup()
 
@@ -570,6 +609,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logging.info("🛑 사용자에 의해 봇이 종료되었습니다.")
     except Exception as e:
-        logging.error(f"메인 프로세스 오류: {e}")
+        logging.error(f"❌ 메인 프로세스 오류: {e}")
     finally:
         logging.info("👋 봇 종료 완료")
