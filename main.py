@@ -160,19 +160,24 @@ async def certify_commit(ctx):
             if date_str in history:
                 today_record = history[date_str]
                 passed = today_record.get("passed", False)
-                commits = today_record.get("commits", 0)
                 
-                status_msg = "✅ 통과" if passed else "❌ 실패"
-                embed = discord.Embed(
-                    title=f"{ctx.author.display_name}님 오늘의 인증 결과",
-                    description=f"**{status_msg}** (이미 인증 완료)",
-                    color=discord.Color.green() if passed else discord.Color.red()
-                )
-                embed.add_field(name="GitHub", value=f"`{user_data['github_id']}`", inline=True)
-                embed.add_field(name="오늘 커밋 / 목표", value=f"**{commits}** / {user_data['goal_per_day']}", inline=True)
-                embed.add_field(name="💡 안내", value="하루에 한 번만 인증할 수 있습니다.", inline=False)
-                await ctx.send(embed=embed)
-                return
+                # 통과한 경우만 재인증 차단
+                if passed:
+                    commits = today_record.get("commits", 0)
+                    embed = discord.Embed(
+                        title=f"{ctx.author.display_name}님 오늘의 인증 결과",
+                        description=f"**✅ 통과** (이미 인증 완료)",
+                        color=discord.Color.green()
+                    )
+                    embed.add_field(name="GitHub", value=f"`{user_data['github_id']}`", inline=True)
+                    embed.add_field(name="오늘 커밋 / 목표", value=f"**{commits}** / {user_data['goal_per_day']}", inline=True)
+                    embed.add_field(name="💡 안내", value="이미 통과하여 추가 인증이 불가능합니다.", inline=False)
+                    await ctx.send(embed=embed)
+                    return
+                else:
+                    # 실패한 기록이 있으면 재인증 허용 (아래 로직 계속 진행)
+                    # 사용자에게 재시도임을 알림
+                    await ctx.send("🔄 이전 인증이 실패했습니다. 다시 확인해보겠습니다...", delete_after=3)
 
             if now_kst.weekday() >= 5:
                 await ctx.send("🌴 주말인디 살살하세요 행님 ☕")
@@ -201,6 +206,11 @@ async def certify_commit(ctx):
             embed.add_field(name="GitHub", value=f"`{user_data['github_id']}`", inline=True)
             embed.add_field(name="오늘 커밋 / 목표", value=f"**{commits}** / {user_data['goal_per_day']}", inline=True)
             embed.add_field(name="📅 인증 시간", value=now_kst.strftime("%H:%M:%S"), inline=True)
+            
+            # 실패한 경우 재시도 가능하다는 안내 추가
+            if not passed:
+                embed.add_field(name="💡 안내", value="목표 달성 후 다시 인증하시면 됩니다!", inline=False)
+            
             await ctx.send(embed=embed)
             
     except Exception as e:
@@ -276,10 +286,15 @@ async def edit_fails(ctx, member: discord.Member, amount: int):
         try:
             user_ref = db.collection("users").document(str(member.id))
             
-            # 유저 존재 여부만 먼저 확인
-            if not (await db_get(user_ref)).exists:
+            # 유저 존재 여부 확인 및 기존 값 가져오기
+            user_doc = await db_get(user_ref)
+            if not user_doc.exists:
                 await ctx.send("❌ 해당 유저는 등록되어 있지 않습니다.")
                 return
+            
+            user_data = user_doc.to_dict()
+            old_total_fail = user_data.get("total_fail", 0)
+            old_weekly_fail = user_data.get("weekly_fail", 0)
             
             # Firestore.Increment를 사용하여 안전하게 값을 변경
             await db_update(user_ref, {
@@ -289,10 +304,37 @@ async def edit_fails(ctx, member: discord.Member, amount: int):
 
             # 업데이트된 최신 정보를 바로 가져옵니다.
             updated_doc = await db_get(user_ref)
-            new_total = updated_doc.to_dict().get("total_fail", 0)
+            updated_data = updated_doc.to_dict()
+            new_total_fail = updated_data.get("total_fail", 0)
+            new_weekly_fail = updated_data.get("weekly_fail", 0)
 
-            # 정확한 최신 값으로 메시지를 보냅니다.
-            await ctx.send(f"🔧 {member.mention}님의 기각 횟수를 {amount}만큼 조정했습니다. (현재 총 기각: {new_total}회)")
+            # 변경 내용을 자세히 보여주는 임베드 메시지
+            embed = discord.Embed(
+                title="🔧 기각 횟수 수정 완료",
+                description=f"{member.mention}님의 기각 횟수를 **{amount:+d}**만큼 조정했습니다.",
+                color=discord.Color.blue()
+            )
+            
+            embed.add_field(
+                name="📊 총 누적 기각",
+                value=f"**{old_total_fail}회** → **{new_total_fail}회**",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="📅 이번 주 기각",
+                value=f"**{old_weekly_fail}회** → **{new_weekly_fail}회**",
+                inline=True
+            )
+            
+            # 변경량 표시
+            embed.add_field(
+                name="🔄 변경량",
+                value=f"**{amount:+d}회**",
+                inline=True
+            )
+            
+            await ctx.send(embed=embed)
             
         except Exception as e:
             logging.error(f"기각수정 중 오류 발생: {e}")
